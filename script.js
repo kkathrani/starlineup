@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.5
+VERSION 13.6
 ============================================================
 
 Keeps:
@@ -3555,6 +3555,236 @@ function formatTime(
 
 function populateServers() {
 
+    /*
+    Final safety filter for the dropdown.
+
+    This intentionally re-validates every name AFTER all OCR and
+    canonicalization are finished. That way even if a noisy OCR
+    fragment somehow survives an earlier cleanup step, it cannot
+    appear in the "Who are you?" list.
+    */
+
+    const frequency =
+        new Map();
+
+
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
+                server => {
+
+                    const name =
+                        cleanServerName(
+                            server.name
+                        );
+
+
+                    if (!name) {
+                        return;
+                    }
+
+
+                    server.name =
+                        name;
+
+
+                    const key =
+                        normalizeNameKey(
+                            name
+                        );
+
+
+                    frequency.set(
+                        key,
+                        (
+                            frequency.get(
+                                key
+                            ) || 0
+                        ) + 1
+                    );
+
+                }
+            );
+
+        }
+    );
+
+
+    /*
+    Gather candidate display names.
+    */
+    const displayByKey =
+        new Map();
+
+
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
+                server => {
+
+                    const name =
+                        cleanServerName(
+                            server.name
+                        );
+
+
+                    if (!name) {
+                        return;
+                    }
+
+
+                    const key =
+                        normalizeNameKey(
+                            name
+                        );
+
+
+                    if (
+                        !displayByKey.has(
+                            key
+                        )
+                    ) {
+
+                        displayByKey.set(
+                            key,
+                            name
+                        );
+
+                    }
+
+                }
+            );
+
+        }
+    );
+
+
+    const strongKeys =
+        [
+            ...displayByKey.keys()
+        ]
+            .filter(
+                key =>
+                    (
+                        frequency.get(
+                            key
+                        ) || 0
+                    ) >= 2
+            );
+
+
+    /*
+    If a one-off OCR result is very close to a name that appears
+    repeatedly, map it to the repeated name. This handles things
+    like "Erk" or "Enk" when "Erik" appears elsewhere.
+    */
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
+                server => {
+
+                    const originalName =
+                        cleanServerName(
+                            server.name
+                        );
+
+
+                    if (!originalName) {
+                        return;
+                    }
+
+
+                    const originalKey =
+                        normalizeNameKey(
+                            originalName
+                        );
+
+
+                    if (
+                        (
+                            frequency.get(
+                                originalKey
+                            ) || 0
+                        ) >= 2
+                    ) {
+
+                        return;
+
+                    }
+
+
+                    let bestKey =
+                        null;
+
+
+                    let bestDistance =
+                        Infinity;
+
+
+                    strongKeys.forEach(
+                        key => {
+
+                            const distance =
+                                nameEditDistance(
+                                    originalKey,
+                                    key
+                                );
+
+
+                            const allowed =
+                                Math.min(
+                                    originalKey.length,
+                                    key.length
+                                ) <= 4
+                                    ? 1
+                                    : 2;
+
+
+                            if (
+                                distance <= allowed &&
+                                distance < bestDistance
+                            ) {
+
+                                bestDistance =
+                                    distance;
+
+
+                                bestKey =
+                                    key;
+
+                            }
+
+                        }
+                    );
+
+
+                    if (
+                        bestKey &&
+                        displayByKey.has(
+                            bestKey
+                        )
+                    ) {
+
+                        server.name =
+                            displayByKey.get(
+                                bestKey
+                            );
+
+                    }
+
+                }
+            );
+
+        }
+    );
+
+
+    /*
+    Build dropdown only from names that survive the strict cleanup.
+    */
     const names =
         new Set();
 
@@ -3565,15 +3795,20 @@ function populateServers() {
             showing.servers.forEach(
                 server => {
 
-                    if (
-                        server.name
-                    ) {
-
-                        names.add(
+                    const name =
+                        cleanServerName(
                             server.name
                         );
 
+
+                    if (!name) {
+                        return;
                     }
+
+
+                    names.add(
+                        name
+                    );
 
                 }
             );
@@ -3622,6 +3857,14 @@ function populateServers() {
 
             }
         );
+
+
+    /*
+    Visible diagnostic in Detected Text so we can confirm the
+    browser is executing this exact script version.
+    */
+    detectedText.textContent +=
+        "\nSCRIPT VERSION: 13.6\n";
 
 }
 
