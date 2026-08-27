@@ -1,77 +1,58 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 8 — PER-CELL OCR + TIME DEBUGGING
+VERSION 9
 ============================================================
 
-This version:
-✓ Detects 5 showing columns automatically
-✓ Detects all theater row lines automatically
-✓ OCRs each time/server cell individually
-✓ Logs EVERY raw time-cell OCR result
-✓ Handles 1-server = ALL ROWS
-✓ Handles 2-server row splits
-✓ Handles conditional 3rd server
-✓ Handles over-50 row changes
-✓ Sorts final schedule chronologically
+Changes:
+- Detects spreadsheet grid automatically
+- Works regardless of screenshot resolution
+- Reads each time cell separately
+- Uses a time-specific OCR whitelist
+- Uses much more tolerant time parsing
+- Preserves raw OCR debug output
+- Reads server names separately
+- 1 server = ALL ROWS
+- 2 servers = split theater
+- 3rd row = conditional over-50 server
+- Sorts personal schedule chronologically
 ============================================================
 */
 
 
-/* =========================================================
-   PAGE ELEMENTS
-========================================================= */
+// =========================================================
+// DOM
+// =========================================================
 
-const imageInput =
-    document.getElementById("lineupImage");
+const imageInput = document.getElementById("lineupImage");
+const imagePreview = document.getElementById("imagePreview");
+const previewContainer = document.getElementById("previewContainer");
 
-const imagePreview =
-    document.getElementById("imagePreview");
+const readButton = document.getElementById("readButton");
 
-const previewContainer =
-    document.getElementById("previewContainer");
+const serverSection = document.getElementById("serverSection");
+const serverSelect = document.getElementById("serverSelect");
 
-const readButton =
-    document.getElementById("readButton");
+const scheduleSection = document.getElementById("scheduleSection");
+const scheduleList = document.getElementById("scheduleList");
 
-const serverSection =
-    document.getElementById("serverSection");
+const scheduleName = document.getElementById("scheduleName");
+const scheduleDate = document.getElementById("scheduleDate");
 
-const serverSelect =
-    document.getElementById("serverSelect");
+const loading = document.getElementById("loading");
+const progressBar = document.getElementById("progressBar");
 
-const scheduleSection =
-    document.getElementById("scheduleSection");
-
-const scheduleList =
-    document.getElementById("scheduleList");
-
-const scheduleName =
-    document.getElementById("scheduleName");
-
-const scheduleDate =
-    document.getElementById("scheduleDate");
-
-const loading =
-    document.getElementById("loading");
-
-const progressBar =
-    document.getElementById("progressBar");
-
-const debugSection =
-    document.getElementById("debugSection");
-
-const detectedText =
-    document.getElementById("detectedText");
+const debugSection = document.getElementById("debugSection");
+const detectedText = document.getElementById("detectedText");
 
 
 let uploadedFile = null;
 let lineupData = [];
 
 
-/* =========================================================
-   THEATER ROW RULES
-========================================================= */
+// =========================================================
+// CURRENT STAR CINEMA ROW CONFIGURATIONS
+// =========================================================
 
 const theaterRows = {
 
@@ -126,363 +107,555 @@ const theaterRows = {
 };
 
 
-/* =========================================================
-   IMAGE UPLOAD
-========================================================= */
+// =========================================================
+// UPLOAD
+// =========================================================
 
-imageInput.addEventListener(
-    "change",
-    () => {
+imageInput.addEventListener("change", () => {
 
-        uploadedFile =
-            imageInput.files[0];
+    uploadedFile = imageInput.files[0];
 
-        if (!uploadedFile) {
-            return;
-        }
+    if (!uploadedFile) return;
 
 
-        const url =
-            URL.createObjectURL(
-                uploadedFile
-            );
+    const url = URL.createObjectURL(uploadedFile);
+
+    imagePreview.src = url;
+
+    imagePreview.onload = () => {
+        URL.revokeObjectURL(url);
+    };
 
 
-        imagePreview.src =
-            url;
+    previewContainer.classList.remove("hidden");
+    readButton.classList.remove("hidden");
+
+    serverSection.classList.add("hidden");
+    scheduleSection.classList.add("hidden");
+    debugSection.classList.add("hidden");
+
+    lineupData = [];
+});
 
 
-        imagePreview.onload =
-            () => {
-                URL.revokeObjectURL(url);
-            };
+// =========================================================
+// READ LINEUP
+// =========================================================
 
+readButton.addEventListener("click", async () => {
 
-        previewContainer
-            .classList
-            .remove("hidden");
-
-
-        readButton
-            .classList
-            .remove("hidden");
-
-
-        serverSection
-            .classList
-            .add("hidden");
-
-
-        scheduleSection
-            .classList
-            .add("hidden");
-
-
-        debugSection
-            .classList
-            .add("hidden");
-
-
-        lineupData = [];
-
+    if (!uploadedFile) {
+        alert("Upload a lineup screenshot first.");
+        return;
     }
-);
 
 
-/* =========================================================
-   READ LINEUP
-========================================================= */
+    readButton.disabled = true;
+    readButton.textContent = "Detecting Spreadsheet...";
 
-readButton.addEventListener(
-    "click",
-    async () => {
+    loading.classList.remove("hidden");
+    progressBar.style.width = "0%";
 
-        if (!uploadedFile) {
+    serverSection.classList.add("hidden");
+    scheduleSection.classList.add("hidden");
 
-            alert(
-                "Upload a lineup screenshot first."
+    debugSection.classList.remove("hidden");
+    detectedText.textContent = "Loading image...\n";
+
+
+    try {
+
+        const image = await loadImage(uploadedFile);
+
+        detectedText.textContent +=
+            `Image: ${image.width} x ${image.height}\n`;
+
+
+        const analysis = createAnalysisCanvas(image);
+
+
+        // ---------------------------------------------
+        // Detect the 5 showing columns
+        // ---------------------------------------------
+
+        const columns = detectShowingColumns(analysis);
+
+        detectedText.textContent +=
+            `Showing column edges: ${columns.length}\n`;
+
+
+        if (columns.length !== 6) {
+
+            throw new Error(
+                `Expected 6 column edges, found ${columns.length}.`
             );
-
-            return;
         }
 
 
-        readButton.disabled =
-            true;
+        // ---------------------------------------------
+        // Detect all horizontal cell boundaries
+        // ---------------------------------------------
 
-        readButton.textContent =
-            "Detecting Spreadsheet...";
-
-
-        loading
-            .classList
-            .remove("hidden");
-
-
-        progressBar.style.width =
-            "0%";
+        const rows = detectTheaterGrid(
+            analysis,
+            columns[0],
+            columns[5]
+        );
 
 
-        serverSection
-            .classList
-            .add("hidden");
+        detectedText.textContent +=
+            `Horizontal grid lines: ${rows.length}\n`;
 
 
-        scheduleSection
-            .classList
-            .add("hidden");
+        if (rows.length !== 41) {
+
+            throw new Error(
+                `Expected 41 horizontal lines, found ${rows.length}.`
+            );
+        }
 
 
-        debugSection
-            .classList
-            .remove("hidden");
+        detectedText.textContent +=
+            "\nGrid detection successful.\n";
 
 
-        detectedText.textContent =
-            "Loading image...\n";
+        // ---------------------------------------------
+        // OCR worker
+        // ---------------------------------------------
+
+        readButton.textContent = "Starting OCR...";
 
 
-        try {
-
-            const image =
-                await loadImage(
-                    uploadedFile
-                );
+        const worker = await Tesseract.createWorker(
+            "eng",
+            1
+        );
 
 
-            detectedText.textContent +=
-                `Image: ${image.width} × ${image.height}\n`;
+        // ---------------------------------------------
+        // FIRST PASS:
+        // Read only the 40 time cells.
+        // ---------------------------------------------
+
+        await worker.setParameters({
+
+            tessedit_pageseg_mode:
+                Tesseract.PSM?.SINGLE_LINE || 7,
+
+            tessedit_char_whitelist:
+                "0123456789:.-apmAPM"
+
+        });
 
 
-            const analysis =
-                createAnalysisCanvas(
-                    image
-                );
+        detectedText.textContent +=
+            "\nTIME CELL OCR\n";
+        detectedText.textContent +=
+            "====================================\n";
 
 
-            const columns =
-                detectShowingColumns(
-                    analysis
-                );
+        const detectedShowings = [];
+
+        let counter = 0;
 
 
-            detectedText.textContent +=
-                `Showing column edges: ${columns.length}\n`;
+        for (
+            let theater = 1;
+            theater <= 8;
+            theater++
+        ) {
+
+            const base =
+                (theater - 1) * 5;
 
 
-            if (
-                columns.length !== 6
+            const timeTop =
+                rows[base + 1];
+
+            const timeBottom =
+                rows[base + 2];
+
+
+            for (
+                let column = 0;
+                column < 5;
+                column++
             ) {
 
-                throw new Error(
-                    `Expected 6 showing-column edges but detected ${columns.length}.`
-                );
-            }
+                counter++;
 
 
-            const rows =
-                detectTheaterGrid(
-                    analysis,
-                    columns[0],
-                    columns[5]
-                );
+                readButton.textContent =
+                    `Reading times ${counter}/40...`;
 
 
-            detectedText.textContent +=
-                `Horizontal grid lines: ${rows.length}\n`;
+                progressBar.style.width =
+                    `${(counter / 40) * 50}%`;
 
 
-            if (
-                rows.length !== 41
-            ) {
+                const left =
+                    columns[column];
 
-                throw new Error(
-                    `Expected 41 horizontal grid lines but detected ${rows.length}.`
-                );
-            }
+                const right =
+                    columns[column + 1];
 
 
-            detectedText.textContent +=
-                "\nGrid detected successfully.\n";
-
-            detectedText.textContent +=
-                "Reading individual cells...\n\n";
-
-
-            const worker =
-                await Tesseract.createWorker(
-                    "eng",
-                    1
-                );
+                const raw =
+                    await ocrCell(
+                        worker,
+                        image,
+                        left,
+                        timeTop,
+                        right,
+                        timeBottom,
+                        "time"
+                    );
 
 
-            if (
-                Tesseract.PSM &&
-                Tesseract.PSM.SINGLE_LINE
-            ) {
+                const normalized =
+                    normalizeTimeOCR(raw);
 
-                await worker.setParameters({
 
-                    tessedit_pageseg_mode:
-                        Tesseract.PSM.SINGLE_LINE
+                const parsed =
+                    parseShowtime(normalized);
 
+
+                detectedText.textContent +=
+                    `T${theater} C${column + 1}: ` +
+                    `"${raw || "(blank)"}"`;
+
+
+                if (normalized !== raw) {
+
+                    detectedText.textContent +=
+                        ` -> "${normalized}"`;
+                }
+
+
+                if (parsed) {
+
+                    detectedText.textContent +=
+                        "  ✓";
+                }
+
+                else {
+
+                    detectedText.textContent +=
+                        "  ✗";
+                }
+
+
+                detectedText.textContent +=
+                    "\n";
+
+
+                if (!parsed) {
+                    continue;
+                }
+
+
+                detectedShowings.push({
+
+                    theater,
+
+                    column,
+
+                    left,
+
+                    right,
+
+                    base,
+
+                    ...parsed,
+
+                    servers: [],
+
+                    rules:
+                        theaterRows[theater],
+
+                    rawTime:
+                        raw
                 });
             }
+        }
 
 
-            lineupData =
-                await readGridCells(
-                    image,
-                    worker,
-                    columns,
-                    rows
-                );
+        detectedText.textContent +=
+            `\nValid showings found: ${detectedShowings.length}\n`;
 
 
-            await worker.terminate();
+        // ---------------------------------------------
+        // SECOND PASS:
+        // Read server cells only where a showing exists.
+        // ---------------------------------------------
+
+        await worker.setParameters({
+
+            tessedit_pageseg_mode:
+                Tesseract.PSM?.SINGLE_LINE || 7,
+
+            tessedit_char_whitelist:
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'()-"
+
+        });
 
 
-            lineupData.forEach(
-                applyAssignmentRules
-            );
+        detectedText.textContent +=
+            "\nSERVER OCR\n";
+        detectedText.textContent +=
+            "====================================\n";
 
 
-            showDetectedLineup(
-                columns,
-                rows
-            );
+        let serverCounter = 0;
+
+        const totalServerCells =
+            detectedShowings.length * 3;
 
 
-            populateServers();
+        for (const showing of detectedShowings) {
+
+            const base =
+                showing.base;
 
 
-            if (
-                lineupData.length === 0
+            const serverBounds = [
+
+                [
+                    rows[base + 2],
+                    rows[base + 3]
+                ],
+
+                [
+                    rows[base + 3],
+                    rows[base + 4]
+                ],
+
+                [
+                    rows[base + 4],
+                    rows[base + 5]
+                ]
+
+            ];
+
+
+            for (
+                let position = 0;
+                position < 3;
+                position++
             ) {
 
-                alert(
-                    "The spreadsheet grid was detected, but no showtimes could be read."
-                );
+                serverCounter++;
+
+
+                readButton.textContent =
+                    `Reading names ${serverCounter}/${totalServerCells}...`;
+
+
+                const secondHalfProgress =
+                    totalServerCells
+                        ? (
+                            serverCounter /
+                            totalServerCells
+                        ) * 50
+                        : 50;
+
+
+                progressBar.style.width =
+                    `${50 + secondHalfProgress}%`;
+
+
+                const [top, bottom] =
+                    serverBounds[position];
+
+
+                const raw =
+                    await ocrCell(
+                        worker,
+                        image,
+                        showing.left,
+                        top,
+                        showing.right,
+                        bottom,
+                        "name"
+                    );
+
+
+                const name =
+                    cleanServerName(raw);
+
+
+                if (raw) {
+
+                    detectedText.textContent +=
+
+                        `T${showing.theater} ` +
+                        `${showing.start} ` +
+                        `row ${position + 1}: ` +
+                        `"${raw}"`;
+
+
+                    if (name) {
+
+                        detectedText.textContent +=
+                            ` -> ${name}`;
+                    }
+
+
+                    detectedText.textContent +=
+                        "\n";
+                }
+
+
+                if (!name) {
+                    continue;
+                }
+
+
+                showing.servers.push({
+
+                    name,
+
+                    position:
+                        position + 1,
+
+                    conditional:
+                        position === 2,
+
+                    rows:
+                        "",
+
+                    over50:
+                        ""
+                });
             }
-
-            else {
-
-                serverSection
-                    .classList
-                    .remove("hidden");
-
-
-                serverSection
-                    .scrollIntoView({
-                        behavior: "smooth"
-                    });
-            }
-
         }
 
-        catch (error) {
 
-            console.error(
-                error
-            );
+        await worker.terminate();
 
 
-            detectedText.textContent +=
-                "\n\nERROR\n" +
-                "================================\n" +
-                (
-                    error?.stack ||
-                    error?.message ||
-                    String(error)
-                );
+        lineupData =
+            detectedShowings;
 
+
+        // ---------------------------------------------
+        // Apply scheduling rules
+        // ---------------------------------------------
+
+        lineupData.forEach(
+            applyAssignmentRules
+        );
+
+
+        populateServers();
+
+
+        // ---------------------------------------------
+        // Add final interpretation WITHOUT deleting
+        // our OCR debug text.
+        // ---------------------------------------------
+
+        appendDetectedLineup();
+
+
+        if (!lineupData.length) {
 
             alert(
-                "There was a problem reading the lineup. Scroll down to Detected Text."
+                "The grid was detected, but no showtimes could be read. Scroll down to the time-cell OCR results."
             );
+
         }
 
+        else {
 
-        loading
-            .classList
-            .add("hidden");
+            serverSection.classList.remove("hidden");
 
-
-        readButton.disabled =
-            false;
-
-
-        readButton.textContent =
-            "Read Lineup";
+            serverSection.scrollIntoView({
+                behavior: "smooth"
+            });
+        }
 
     }
-);
+
+    catch (error) {
+
+        console.error(error);
 
 
-/* =========================================================
-   LOAD IMAGE
-========================================================= */
+        detectedText.textContent +=
+            "\n\nERROR\n";
+        detectedText.textContent +=
+            "====================================\n";
+
+        detectedText.textContent +=
+            error?.stack ||
+            error?.message ||
+            String(error);
+
+
+        alert(
+            "There was a problem reading the lineup. Scroll down to Detected Text."
+        );
+    }
+
+
+    loading.classList.add("hidden");
+
+    readButton.disabled = false;
+    readButton.textContent = "Read Lineup";
+
+});
+
+
+// =========================================================
+// IMAGE
+// =========================================================
 
 function loadImage(file) {
 
     return new Promise(
         (resolve, reject) => {
 
-            const image =
-                new Image();
-
+            const image = new Image();
 
             const url =
-                URL.createObjectURL(
-                    file
+                URL.createObjectURL(file);
+
+
+            image.onload = () => {
+
+                URL.revokeObjectURL(url);
+
+                resolve(image);
+            };
+
+
+            image.onerror = () => {
+
+                URL.revokeObjectURL(url);
+
+                reject(
+                    new Error(
+                        "Could not load image."
+                    )
                 );
+            };
 
 
-            image.onload =
-                () => {
-
-                    URL.revokeObjectURL(
-                        url
-                    );
-
-                    resolve(
-                        image
-                    );
-                };
-
-
-            image.onerror =
-                () => {
-
-                    URL.revokeObjectURL(
-                        url
-                    );
-
-                    reject(
-                        new Error(
-                            "Could not load uploaded image."
-                        )
-                    );
-                };
-
-
-            image.src =
-                url;
+            image.src = url;
         }
     );
 }
 
 
-/* =========================================================
-   CREATE ANALYSIS CANVAS
-========================================================= */
+// =========================================================
+// ANALYSIS CANVAS
+// =========================================================
 
 function createAnalysisCanvas(image) {
 
     const canvas =
-        document.createElement(
-            "canvas"
-        );
+        document.createElement("canvas");
 
 
     canvas.width =
@@ -519,10 +692,6 @@ function createAnalysisCanvas(image) {
 
     return {
 
-        canvas,
-
-        ctx,
-
         data:
             imageData.data,
 
@@ -535,9 +704,9 @@ function createAnalysisCanvas(image) {
 }
 
 
-/* =========================================================
-   PIXEL BRIGHTNESS
-========================================================= */
+// =========================================================
+// BRIGHTNESS
+// =========================================================
 
 function brightnessAt(
     analysis,
@@ -565,7 +734,7 @@ function brightnessAt(
         );
 
 
-    const index =
+    const i =
         (
             y *
             analysis.width +
@@ -575,24 +744,23 @@ function brightnessAt(
 
     return (
 
-        analysis.data[index] +
-        analysis.data[index + 1] +
-        analysis.data[index + 2]
+        analysis.data[i] +
+        analysis.data[i + 1] +
+        analysis.data[i + 2]
 
     ) / 3;
 }
 
 
-/* =========================================================
-   DETECT SHOWING COLUMNS
-========================================================= */
+// =========================================================
+// COLUMN DETECTION
+// =========================================================
 
 function detectShowingColumns(
     analysis
 ) {
 
-    const candidates =
-        [];
+    const candidates = [];
 
 
     const yStart =
@@ -613,10 +781,8 @@ function detectShowingColumns(
         Math.max(
             1,
             Math.floor(
-                (
-                    yEnd -
-                    yStart
-                ) / 2
+                (yEnd - yStart) /
+                2
             )
         );
 
@@ -627,8 +793,7 @@ function detectShowingColumns(
         x++
     ) {
 
-        let dark =
-            0;
+        let dark = 0;
 
 
         for (
@@ -656,9 +821,7 @@ function detectShowingColumns(
             0.68
         ) {
 
-            candidates.push(
-                x
-            );
+            candidates.push(x);
         }
     }
 
@@ -684,33 +847,19 @@ function detectShowingColumns(
         );
 
 
-    return findBestColumnSet(
-        lines
-    );
+    return findBestColumnSet(lines);
 }
 
 
-/* =========================================================
-   FIND BEST COLUMN SET
-========================================================= */
-
 function findBestColumnSet(lines) {
 
-    if (
-        lines.length <
-        6
-    ) {
-
+    if (lines.length < 6) {
         return [];
     }
 
 
-    let best =
-        null;
-
-
-    let bestScore =
-        Infinity;
+    let best = null;
+    let bestScore = Infinity;
 
 
     for (
@@ -727,8 +876,7 @@ function findBestColumnSet(lines) {
             );
 
 
-        const gaps =
-            [];
+        const gaps = [];
 
 
         for (
@@ -753,10 +901,7 @@ function findBestColumnSet(lines) {
             gaps.length;
 
 
-        if (
-            average <= 0
-        ) {
-
+        if (average <= 0) {
             continue;
         }
 
@@ -765,15 +910,13 @@ function findBestColumnSet(lines) {
             gaps.reduce(
                 (sum, gap) => {
 
-                    const difference =
+                    const d =
                         gap -
                         average;
 
-
                     return (
                         sum +
-                        difference *
-                        difference
+                        d * d
                     );
 
                 },
@@ -783,30 +926,21 @@ function findBestColumnSet(lines) {
 
 
         const score =
-            Math.sqrt(
-                variance
-            ) /
+            Math.sqrt(variance) /
             average;
 
 
-        if (
-            score <
-            bestScore
-        ) {
+        if (score < bestScore) {
 
-            bestScore =
-                score;
-
-            best =
-                set;
+            bestScore = score;
+            best = set;
         }
     }
 
 
     if (
         !best ||
-        bestScore >
-        0.15
+        bestScore > 0.15
     ) {
 
         return [];
@@ -817,9 +951,9 @@ function findBestColumnSet(lines) {
 }
 
 
-/* =========================================================
-   DETECT THEATER GRID
-========================================================= */
+// =========================================================
+// HORIZONTAL GRID DETECTION
+// =========================================================
 
 function detectTheaterGrid(
     analysis,
@@ -827,8 +961,7 @@ function detectTheaterGrid(
     right
 ) {
 
-    const candidates =
-        [];
+    const candidates = [];
 
 
     const xStart =
@@ -847,10 +980,8 @@ function detectTheaterGrid(
         Math.max(
             1,
             Math.floor(
-                (
-                    xEnd -
-                    xStart
-                ) / 2
+                (xEnd - xStart) /
+                2
             )
         );
 
@@ -861,8 +992,7 @@ function detectTheaterGrid(
         y++
     ) {
 
-        let dark =
-            0;
+        let dark = 0;
 
 
         for (
@@ -890,9 +1020,7 @@ function detectTheaterGrid(
             0.60
         ) {
 
-            candidates.push(
-                y
-            );
+            candidates.push(y);
         }
     }
 
@@ -918,33 +1046,19 @@ function detectTheaterGrid(
         );
 
 
-    return findBestTheaterGrid(
-        lines
-    );
+    return findBestTheaterGrid(lines);
 }
 
 
-/* =========================================================
-   FIND BEST THEATER GRID
-========================================================= */
-
 function findBestTheaterGrid(lines) {
 
-    if (
-        lines.length <
-        41
-    ) {
-
+    if (lines.length < 41) {
         return [];
     }
 
 
-    let best =
-        null;
-
-
-    let bestScore =
-        Infinity;
+    let best = null;
+    let bestScore = Infinity;
 
 
     for (
@@ -961,12 +1075,9 @@ function findBestTheaterGrid(lines) {
             );
 
 
-        const gaps =
-            [];
+        const gaps = [];
 
-
-        let valid =
-            true;
+        let valid = true;
 
 
         for (
@@ -980,20 +1091,14 @@ function findBestTheaterGrid(lines) {
                 set[i];
 
 
-            if (
-                gap <= 0
-            ) {
+            if (gap <= 0) {
 
-                valid =
-                    false;
-
+                valid = false;
                 break;
             }
 
 
-            gaps.push(
-                gap
-            );
+            gaps.push(gap);
         }
 
 
@@ -1002,72 +1107,48 @@ function findBestTheaterGrid(lines) {
         }
 
 
-        const movieGaps =
-            [];
-
-
-        const smallerGaps =
-            [];
+        const movieGaps = [];
+        const smallGaps = [];
 
 
         gaps.forEach(
-            (
-                gap,
-                index
-            ) => {
+            (gap, index) => {
 
                 if (
                     index % 5 === 0
                 ) {
 
-                    movieGaps.push(
-                        gap
-                    );
+                    movieGaps.push(gap);
+
                 }
 
                 else {
 
-                    smallerGaps.push(
-                        gap
-                    );
+                    smallGaps.push(gap);
                 }
-
             }
         );
 
 
         const movieMedian =
-            median(
-                movieGaps
-            );
+            median(movieGaps);
 
 
         const smallMedian =
-            median(
-                smallerGaps
-            );
+            median(smallGaps);
 
 
         if (
-            smallMedian <= 0
-        ) {
-
-            continue;
-        }
-
-
-        if (
+            !smallMedian ||
             movieMedian <
-            smallMedian *
-            1.35
+            smallMedian * 1.35
         ) {
 
             continue;
         }
 
 
-        let score =
-            0;
+        let score = 0;
 
 
         movieGaps.forEach(
@@ -1083,7 +1164,7 @@ function findBestTheaterGrid(lines) {
         );
 
 
-        smallerGaps.forEach(
+        smallGaps.forEach(
             gap => {
 
                 score +=
@@ -1096,60 +1177,44 @@ function findBestTheaterGrid(lines) {
         );
 
 
-        if (
-            score <
-            bestScore
-        ) {
+        if (score < bestScore) {
 
-            bestScore =
-                score;
-
-            best =
-                set;
+            bestScore = score;
+            best = set;
         }
     }
 
 
-    return (
-        best ||
-        []
-    );
+    return best || [];
 }
 
 
-/* =========================================================
-   CLUSTER GRID POSITIONS
-========================================================= */
+// =========================================================
+// CLUSTER LINES
+// =========================================================
 
 function clusterPositions(
     values,
     maximumGap
 ) {
 
-    if (
-        !values.length
-    ) {
-
+    if (!values.length) {
         return [];
     }
 
 
     const sorted =
-        [...values]
-            .sort(
-                (a, b) =>
-                    a - b
-            );
+        [...values].sort(
+            (a, b) =>
+                a - b
+        );
 
 
-    const clusters =
-        [];
+    const clusters = [];
 
-
-    let current =
-        [
-            sorted[0]
-        ];
+    let current = [
+        sorted[0]
+    ];
 
 
     for (
@@ -1167,34 +1232,29 @@ function clusterPositions(
             current.push(
                 sorted[i]
             );
+
         }
 
         else {
 
-            clusters.push(
-                current
-            );
+            clusters.push(current);
 
-
-            current =
-                [
-                    sorted[i]
-                ];
+            current = [
+                sorted[i]
+            ];
         }
     }
 
 
-    clusters.push(
-        current
-    );
+    clusters.push(current);
 
 
     return clusters.map(
         cluster =>
 
             cluster.reduce(
-                (sum, value) =>
-                    sum + value,
+                (sum, v) =>
+                    sum + v,
                 0
             ) /
             cluster.length
@@ -1202,26 +1262,18 @@ function clusterPositions(
 }
 
 
-/* =========================================================
-   MEDIAN
-========================================================= */
-
 function median(values) {
 
-    if (
-        !values.length
-    ) {
-
+    if (!values.length) {
         return 0;
     }
 
 
     const sorted =
-        [...values]
-            .sort(
-                (a, b) =>
-                    a - b
-            );
+        [...values].sort(
+            (a, b) =>
+                a - b
+        );
 
 
     const middle =
@@ -1232,431 +1284,95 @@ function median(values) {
 
 
     if (
-        sorted.length %
-        2
+        sorted.length % 2
     ) {
 
-        return sorted[
-            middle
-        ];
+        return sorted[middle];
     }
 
 
     return (
 
-        sorted[
-            middle - 1
-        ] +
-
-        sorted[
-            middle
-        ]
+        sorted[middle - 1] +
+        sorted[middle]
 
     ) / 2;
 }
 
 
-/* =========================================================
-   READ ALL GRID CELLS
-========================================================= */
-
-async function readGridCells(
-    image,
-    worker,
-    columns,
-    rows
-) {
-
-    const showings =
-        [];
-
-
-    let processedCells =
-        0;
-
-
-    const maximumCells =
-        40;
-
-
-    for (
-        let theater = 1;
-        theater <= 8;
-        theater++
-    ) {
-
-        const base =
-            (
-                theater - 1
-            ) * 5;
-
-
-        const timeTop =
-            rows[
-                base + 1
-            ];
-
-
-        const timeBottom =
-            rows[
-                base + 2
-            ];
-
-
-        const server1Top =
-            rows[
-                base + 2
-            ];
-
-
-        const server1Bottom =
-            rows[
-                base + 3
-            ];
-
-
-        const server2Top =
-            rows[
-                base + 3
-            ];
-
-
-        const server2Bottom =
-            rows[
-                base + 4
-            ];
-
-
-        const server3Top =
-            rows[
-                base + 4
-            ];
-
-
-        const server3Bottom =
-            rows[
-                base + 5
-            ];
-
-
-        for (
-            let column = 0;
-            column < 5;
-            column++
-        ) {
-
-            processedCells++;
-
-
-            readButton.textContent =
-                `Reading ${processedCells}/${maximumCells}...`;
-
-
-            progressBar.style.width =
-                (
-                    processedCells /
-                    maximumCells *
-                    100
-                ) +
-                "%";
-
-
-            const left =
-                columns[
-                    column
-                ];
-
-
-            const right =
-                columns[
-                    column + 1
-                ];
-
-
-            const rawTime =
-                await ocrSingleCell(
-                    worker,
-                    image,
-                    left,
-                    timeTop,
-                    right,
-                    timeBottom
-                );
-
-
-            /*
-            IMPORTANT DEBUG OUTPUT
-            */
-
-            console.log(
-                `T${theater} C${column + 1} raw time:`,
-                JSON.stringify(
-                    rawTime
-                )
-            );
-
-
-            detectedText.textContent +=
-                `T${theater} C${column + 1}: "${rawTime || "(blank)"}"\n`;
-
-
-            const parsedTime =
-                parseShowtime(
-                    rawTime
-                );
-
-
-            if (
-                !parsedTime
-            ) {
-
-                continue;
-            }
-
-
-            const rawServer1 =
-                await ocrSingleCell(
-                    worker,
-                    image,
-                    left,
-                    server1Top,
-                    right,
-                    server1Bottom
-                );
-
-
-            const rawServer2 =
-                await ocrSingleCell(
-                    worker,
-                    image,
-                    left,
-                    server2Top,
-                    right,
-                    server2Bottom
-                );
-
-
-            const rawServer3 =
-                await ocrSingleCell(
-                    worker,
-                    image,
-                    left,
-                    server3Top,
-                    right,
-                    server3Bottom
-                );
-
-
-            const servers =
-                [];
-
-
-            const server1 =
-                cleanServerName(
-                    rawServer1
-                );
-
-
-            const server2 =
-                cleanServerName(
-                    rawServer2
-                );
-
-
-            const server3 =
-                cleanServerName(
-                    rawServer3
-                );
-
-
-            if (
-                server1
-            ) {
-
-                servers.push({
-
-                    name:
-                        server1,
-
-                    position:
-                        1,
-
-                    conditional:
-                        false,
-
-                    rows:
-                        "",
-
-                    over50:
-                        ""
-                });
-            }
-
-
-            if (
-                server2
-            ) {
-
-                servers.push({
-
-                    name:
-                        server2,
-
-                    position:
-                        2,
-
-                    conditional:
-                        false,
-
-                    rows:
-                        "",
-
-                    over50:
-                        ""
-                });
-            }
-
-
-            if (
-                server3
-            ) {
-
-                servers.push({
-
-                    name:
-                        server3,
-
-                    position:
-                        3,
-
-                    conditional:
-                        true,
-
-                    rows:
-                        "",
-
-                    over50:
-                        ""
-                });
-            }
-
-
-            showings.push({
-
-                theater,
-
-                start:
-                    parsedTime.start,
-
-                end:
-                    parsedTime.end,
-
-                startMinutes:
-                    parsedTime.startMinutes,
-
-                endMinutes:
-                    parsedTime.endMinutes,
-
-                servers,
-
-                rules:
-                    theaterRows[
-                        theater
-                    ],
-
-                raw: {
-
-                    time:
-                        rawTime,
-
-                    server1:
-                        rawServer1,
-
-                    server2:
-                        rawServer2,
-
-                    server3:
-                        rawServer3
-                }
-
-            });
-        }
-    }
-
-
-    return showings;
-}
-
-
-/* =========================================================
-   OCR ONE CELL
-========================================================= */
-
-async function ocrSingleCell(
+// =========================================================
+// OCR ONE CELL
+// =========================================================
+
+async function ocrCell(
     worker,
     image,
     left,
     top,
     right,
-    bottom
+    bottom,
+    type
 ) {
 
-    const originalWidth =
-        right -
-        left;
+    const cellWidth =
+        right - left;
 
 
-    const originalHeight =
-        bottom -
-        top;
+    const cellHeight =
+        bottom - top;
 
+
+    /*
+    Remove grid borders, but don't cut into
+    characters near the edges.
+    */
 
     const insetX =
         Math.max(
-            2,
-            originalWidth *
-            0.035
+            1,
+            cellWidth * 0.015
         );
 
 
     const insetY =
         Math.max(
             1,
-            originalHeight *
-            0.10
+            cellHeight * 0.04
         );
 
 
-    const cropLeft =
-        left +
-        insetX;
+    const sourceX =
+        left + insetX;
 
 
-    const cropTop =
-        top +
-        insetY;
+    const sourceY =
+        top + insetY;
 
 
-    const cropWidth =
-        Math.max(
-            2,
-            originalWidth -
-            insetX *
-            2
-        );
+    const sourceWidth =
+        cellWidth -
+        insetX * 2;
 
 
-    const cropHeight =
-        Math.max(
-            2,
-            originalHeight -
-            insetY *
-            2
-        );
+    const sourceHeight =
+        cellHeight -
+        insetY * 2;
 
+
+    /*
+    Bigger scale for tiny spreadsheet text.
+    */
 
     const scale =
-        4;
+        type === "time"
+            ? 8
+            : 6;
+
+
+    const padding =
+        type === "time"
+            ? 35
+            : 25;
 
 
     const canvas =
@@ -1666,38 +1382,31 @@ async function ocrSingleCell(
 
 
     canvas.width =
-        Math.max(
-            1,
-            Math.round(
-                cropWidth *
-                scale
-            )
-        );
+        Math.round(
+            sourceWidth *
+            scale
+        ) +
+        padding * 2;
 
 
     canvas.height =
-        Math.max(
-            1,
-            Math.round(
-                cropHeight *
-                scale
-            )
-        );
+        Math.round(
+            sourceHeight *
+            scale
+        ) +
+        padding * 2;
 
 
     const ctx =
         canvas.getContext(
             "2d",
             {
-                willReadFrequently:
-                    true
+                willReadFrequently: true
             }
         );
 
 
-    ctx.fillStyle =
-        "white";
-
+    ctx.fillStyle = "white";
 
     ctx.fillRect(
         0,
@@ -1707,6 +1416,11 @@ async function ocrSingleCell(
     );
 
 
+    /*
+    Important:
+    smoothing ON helps enlarged text.
+    */
+
     ctx.imageSmoothingEnabled =
         true;
 
@@ -1715,17 +1429,30 @@ async function ocrSingleCell(
 
         image,
 
-        cropLeft,
-        cropTop,
-        cropWidth,
-        cropHeight,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
 
-        0,
-        0,
-        canvas.width,
-        canvas.height
+        padding,
+        padding,
+
+        sourceWidth * scale,
+        sourceHeight * scale
     );
 
+
+    /*
+    Grayscale + contrast.
+
+    Version 8 used a very aggressive pure
+    black/white threshold.
+
+    That could destroy the colon and thin parts
+    of the numbers.
+
+    Version 9 keeps grayscale information.
+    */
 
     const imageData =
         ctx.getImageData(
@@ -1747,32 +1474,47 @@ async function ocrSingleCell(
     ) {
 
         const gray =
-
-            0.299 *
-            pixels[i] +
-
-            0.587 *
-            pixels[i + 1] +
-
-            0.114 *
-            pixels[i + 2];
-
-
-        const value =
-            gray <
-            205
-                ? 0
-                : 255;
+            (
+                0.299 *
+                pixels[i]
+            ) +
+            (
+                0.587 *
+                pixels[i + 1]
+            ) +
+            (
+                0.114 *
+                pixels[i + 2]
+            );
 
 
-        pixels[i] =
-            value;
+        /*
+        Increase contrast without destroying
+        anti-aliased character edges.
+        */
 
-        pixels[i + 1] =
-            value;
+        let adjusted =
+            (
+                gray -
+                128
+            ) *
+            1.55 +
+            128;
 
-        pixels[i + 2] =
-            value;
+
+        adjusted =
+            Math.max(
+                0,
+                Math.min(
+                    255,
+                    adjusted
+                )
+            );
+
+
+        pixels[i] = adjusted;
+        pixels[i + 1] = adjusted;
+        pixels[i + 2] = adjusted;
     }
 
 
@@ -1794,6 +1536,10 @@ async function ocrSingleCell(
         ""
     )
         .replace(
+            /\r/g,
+            ""
+        )
+        .replace(
             /\n/g,
             " "
         )
@@ -1805,235 +1551,147 @@ async function ocrSingleCell(
 }
 
 
-/* =========================================================
-   APPLY ASSIGNMENT RULES
-========================================================= */
+// =========================================================
+// NORMALIZE TIME OCR
+// =========================================================
 
-function applyAssignmentRules(
-    showing
-) {
-
-    const normalServers =
-        showing.servers.filter(
-            server =>
-                !server.conditional
-        );
-
-
-    const conditionalServers =
-        showing.servers.filter(
-            server =>
-                server.conditional
-        );
-
-
-    if (
-        normalServers.length === 1
-    ) {
-
-        const server =
-            normalServers[0];
-
-
-        server.rows =
-            "ALL ROWS";
-
-
-        if (
-            conditionalServers.length === 0
-        ) {
-
-            server.over50 =
-                "ALL ROWS";
-        }
-
-        else {
-
-            const first =
-                showing.rules[0]
-                    ?.over50 ||
-                "";
-
-
-            const second =
-                showing.rules[1]
-                    ?.over50 ||
-                "";
-
-
-            server.over50 =
-                combineRows(
-                    first,
-                    second
-                );
-        }
-    }
-
-
-    else if (
-        normalServers.length >= 2
-    ) {
-
-        normalServers.forEach(
-            server => {
-
-                const ruleIndex =
-                    Math.min(
-                        server.position -
-                        1,
-                        1
-                    );
-
-
-                const rule =
-                    showing.rules[
-                        ruleIndex
-                    ];
-
-
-                server.rows =
-                    rule.normal;
-
-
-                server.over50 =
-                    rule.over50;
-            }
-        );
-    }
-
-
-    conditionalServers.forEach(
-        server => {
-
-            const rule =
-                showing.rules[2];
-
-
-            server.rows =
-                rule.over50 ||
-                rule.normal;
-
-
-            server.over50 =
-                server.rows;
-        }
-    );
-}
-
-
-/* =========================================================
-   COMBINE ROW LETTERS
-========================================================= */
-
-function combineRows(
-    first,
-    second
-) {
-
-    const letters =
-        (
-            first +
-            second
-        )
-            .split("")
-            .filter(
-                value =>
-                    /[A-H]/i.test(
-                        value
-                    )
-            );
-
-
-    return [
-        ...new Set(
-            letters
-        )
-    ]
-        .sort()
-        .join("");
-}
-
-
-/* =========================================================
-   CLEAN SERVER NAME
-========================================================= */
-
-function cleanServerName(value) {
+function normalizeTimeOCR(value) {
 
     if (!value) {
         return "";
     }
 
 
-    let cleaned =
+    let text =
         value
+            .trim()
+            .toLowerCase();
+
+
+    /*
+    Common dash characters.
+    */
+
+    text =
+        text.replace(
+            /[–—−_]/g,
+            "-"
+        );
+
+
+    /*
+    Common OCR punctuation mistakes.
+    */
+
+    text =
+        text
             .replace(
-                /[()[\]{}|]/g,
-                ""
+                /;/g,
+                ":"
             )
             .replace(
-                /[^A-Za-zÀ-ÿ' -]/g,
-                ""
-            )
-            .replace(
-                /\s+/g,
-                " "
-            )
-            .trim();
+                /,/g,
+                ":"
+            );
 
 
-    if (
-        cleaned.length <
-        2 ||
-        cleaned.length >
-        24
-    ) {
+    /*
+    O → 0 around numbers.
+    */
 
-        return "";
-    }
-
-
-    if (
-        /^[A-H]{1,8}$/i.test(
-            cleaned
-        )
-    ) {
-
-        return "";
-    }
+    text =
+        text.replace(
+            /[oO]/g,
+            "0"
+        );
 
 
-    if (
-        cleaned
-            .split(" ")
-            .length >
-        2
-    ) {
+    /*
+    l / I / | → 1 around time text.
+    */
 
-        return "";
-    }
+    text =
+        text.replace(
+            /[lI|]/g,
+            "1"
+        );
 
 
-    return cleaned
-        .split(" ")
-        .map(
-            word =>
+    /*
+    Remove spaces.
+    */
 
-                word
-                    .charAt(0)
-                    .toUpperCase() +
+    text =
+        text.replace(
+            /\s+/g,
+            ""
+        );
 
-                word
-                    .slice(1)
-                    .toLowerCase()
-        )
-        .join(" ");
+
+    /*
+    Remove obvious OCR junk.
+    */
+
+    text =
+        text.replace(
+            /[^0-9:.\-apm]/g,
+            ""
+        );
+
+
+    /*
+    Period often substitutes for colon.
+    */
+
+    text =
+        text.replace(
+            /\.(?=\d{2})/g,
+            ":"
+        );
+
+
+    /*
+    If OCR loses the colon:
+
+    1100 -> 11:00
+    105 -> 1:05
+    */
+
+    text =
+        text.replace(
+            /(^|-)(\d{2})(\d{2})(?=[apm-]|$)/g,
+            "$1$2:$3"
+        );
+
+
+    text =
+        text.replace(
+            /(^|-)(\d)(\d{2})(?=[apm-]|$)/g,
+            "$1$2:$3"
+        );
+
+
+    /*
+    Sometimes OCR loses the dash but recognizes
+    two times.
+
+    11:00a1:00p
+    */
+
+    text =
+        text.replace(
+            /(\d{1,2}:\d{2}[ap]m?)(\d{1,2}:\d{2})/,
+            "$1-$2"
+        );
+
+
+    return text;
 }
 
 
-/* =========================================================
-   SHOWTIME PARSER
-========================================================= */
+// =========================================================
+// PARSE SHOWTIME
+// =========================================================
 
 function parseShowtime(value) {
 
@@ -2042,47 +1700,9 @@ function parseShowtime(value) {
     }
 
 
-    let text =
-        value
-            .toLowerCase()
-            .replace(
-                /\s+/g,
-                ""
-            )
-            .replace(
-                /[–—]/g,
-                "-"
-            )
-            .replace(
-                /[;.]/g,
-                ":"
-            );
-
-
-    text =
-        text.replace(
-            /(?<=\d)[oO](?=\d)/g,
-            "0"
-        );
-
-
-    text =
-        text.replace(
-            /(?<=\d)[lI](?=\d)/g,
-            "1"
-        );
-
-
-    text =
-        text.replace(
-            /[^0-9:apm-]/g,
-            ""
-        );
-
-
     const match =
-        text.match(
-            /(\d{1,2}):(\d{2})([ap](?:m)?)?-(\d{1,2}):(\d{2})([ap](?:m)?)?/
+        value.match(
+            /(\d{1,2}):(\d{2})([ap](?:m)?)?-?(\d{1,2}):(\d{2})([ap](?:m)?)?/
         );
 
 
@@ -2092,49 +1712,28 @@ function parseShowtime(value) {
 
 
     const startHour =
-        Number(
-            match[1]
-        );
-
+        Number(match[1]);
 
     const startMinute =
-        Number(
-            match[2]
-        );
+        Number(match[2]);
 
 
     const endHour =
-        Number(
-            match[4]
-        );
-
+        Number(match[4]);
 
     const endMinute =
-        Number(
-            match[5]
-        );
+        Number(match[5]);
 
 
     if (
+        startHour < 1 ||
+        startHour > 12 ||
 
-        startHour <
-        1 ||
+        endHour < 1 ||
+        endHour > 12 ||
 
-        startHour >
-        12 ||
-
-        endHour <
-        1 ||
-
-        endHour >
-        12 ||
-
-        startMinute >
-        59 ||
-
-        endMinute >
-        59
-
+        startMinute > 59 ||
+        endMinute > 59
     ) {
 
         return null;
@@ -2153,6 +1752,10 @@ function parseShowtime(value) {
         );
 
 
+    // ---------------------------------------------
+    // Infer start AM/PM
+    // ---------------------------------------------
+
     if (!startPeriod) {
 
         if (
@@ -2160,19 +1763,28 @@ function parseShowtime(value) {
             startHour === 11
         ) {
 
-            startPeriod =
-                "AM";
+            startPeriod = "AM";
+
         }
 
         else {
 
-            startPeriod =
-                "PM";
+            startPeriod = "PM";
         }
     }
 
 
+    // ---------------------------------------------
+    // Infer end AM/PM
+    // ---------------------------------------------
+
     if (!endPeriod) {
+
+        /*
+        Morning show crossing noon.
+
+        11:00 -> 1:00
+        */
 
         if (
             startPeriod === "AM" &&
@@ -2182,9 +1794,15 @@ function parseShowtime(value) {
             )
         ) {
 
-            endPeriod =
-                "PM";
+            endPeriod = "PM";
+
         }
+
+        /*
+        Late show crossing midnight.
+
+        10:35 PM -> 12:35 AM
+        */
 
         else if (
             startPeriod === "PM" &&
@@ -2195,8 +1813,8 @@ function parseShowtime(value) {
             )
         ) {
 
-            endPeriod =
-                "AM";
+            endPeriod = "AM";
+
         }
 
         else {
@@ -2229,8 +1847,7 @@ function parseShowtime(value) {
     ) {
 
         endMinutes +=
-            24 *
-            60;
+            24 * 60;
     }
 
 
@@ -2257,9 +1874,229 @@ function parseShowtime(value) {
 }
 
 
-/* =========================================================
-   TIME HELPERS
-========================================================= */
+// =========================================================
+// SERVER NAME CLEANUP
+// =========================================================
+
+function cleanServerName(value) {
+
+    if (!value) {
+        return "";
+    }
+
+
+    let cleaned =
+        value
+            .replace(
+                /[()[\]{}|]/g,
+                ""
+            )
+            .replace(
+                /[^A-Za-zÀ-ÿ' -]/g,
+                ""
+            )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim();
+
+
+    if (
+        cleaned.length < 2 ||
+        cleaned.length > 24
+    ) {
+
+        return "";
+    }
+
+
+    if (
+        cleaned
+            .split(" ")
+            .length > 2
+    ) {
+
+        return "";
+    }
+
+
+    /*
+    Don't let OCR row codes become names.
+    */
+
+    if (
+        /^[A-H]{1,8}$/i.test(
+            cleaned
+        )
+    ) {
+
+        return "";
+    }
+
+
+    return cleaned
+        .split(" ")
+        .map(
+            word =>
+
+                word
+                    .charAt(0)
+                    .toUpperCase() +
+
+                word
+                    .slice(1)
+                    .toLowerCase()
+        )
+        .join(" ");
+}
+
+
+// =========================================================
+// ASSIGNMENT RULES
+// =========================================================
+
+function applyAssignmentRules(showing) {
+
+    const normalServers =
+        showing.servers.filter(
+            server =>
+                !server.conditional
+        );
+
+
+    const conditionalServers =
+        showing.servers.filter(
+            server =>
+                server.conditional
+        );
+
+
+    /*
+    ONE NORMAL SERVER
+    = entire theater.
+    */
+
+    if (
+        normalServers.length === 1
+    ) {
+
+        const server =
+            normalServers[0];
+
+
+        server.rows =
+            "ALL ROWS";
+
+
+        if (
+            conditionalServers.length === 0
+        ) {
+
+            server.over50 =
+                "ALL ROWS";
+
+        }
+
+        else {
+
+            server.over50 =
+                combineRows(
+
+                    showing.rules[0]
+                        .over50,
+
+                    showing.rules[1]
+                        .over50
+                );
+        }
+    }
+
+
+    /*
+    TWO NORMAL SERVERS
+    */
+
+    else if (
+        normalServers.length >= 2
+    ) {
+
+        normalServers.forEach(
+            server => {
+
+                const index =
+                    Math.min(
+                        server.position - 1,
+                        1
+                    );
+
+
+                const rule =
+                    showing.rules[index];
+
+
+                server.rows =
+                    rule.normal;
+
+
+                server.over50 =
+                    rule.over50;
+            }
+        );
+    }
+
+
+    /*
+    THIRD / PARENTHETICAL SERVER
+    */
+
+    conditionalServers.forEach(
+        server => {
+
+            const rule =
+                showing.rules[2];
+
+
+            server.rows =
+                rule.over50 ||
+                rule.normal;
+
+
+            server.over50 =
+                server.rows;
+        }
+    );
+}
+
+
+function combineRows(
+    first,
+    second
+) {
+
+    return [
+        ...new Set(
+            (
+                first +
+                second
+            )
+                .split("")
+                .filter(
+                    letter =>
+                        /[A-H]/i.test(
+                            letter
+                        )
+                )
+        )
+    ]
+        .sort()
+        .join("");
+}
+
+
+// =========================================================
+// TIME HELPERS
+// =========================================================
 
 function periodFromMarker(marker) {
 
@@ -2273,9 +2110,7 @@ function periodFromMarker(marker) {
 
 
     if (
-        marker.startsWith(
-            "a"
-        )
+        marker.startsWith("a")
     ) {
 
         return "AM";
@@ -2283,9 +2118,7 @@ function periodFromMarker(marker) {
 
 
     if (
-        marker.startsWith(
-            "p"
-        )
+        marker.startsWith("p")
     ) {
 
         return "PM";
@@ -2302,33 +2135,30 @@ function clockMinutes(
     period
 ) {
 
-    let adjusted =
+    let h =
         hour;
 
 
     if (
         period === "PM" &&
-        adjusted !== 12
+        h !== 12
     ) {
 
-        adjusted +=
-            12;
+        h += 12;
     }
 
 
     if (
         period === "AM" &&
-        adjusted === 12
+        h === 12
     ) {
 
-        adjusted =
-            0;
+        h = 0;
     }
 
 
     return (
-        adjusted *
-        60 +
+        h * 60 +
         minute
     );
 }
@@ -2343,21 +2173,20 @@ function formatTime(
     return (
         hour +
         ":" +
-        String(
-            minute
-        ).padStart(
-            2,
-            "0"
-        ) +
+        String(minute)
+            .padStart(
+                2,
+                "0"
+            ) +
         " " +
         period
     );
 }
 
 
-/* =========================================================
-   SERVER DROPDOWN
-========================================================= */
+// =========================================================
+// SERVER DROPDOWN
+// =========================================================
 
 function populateServers() {
 
@@ -2371,9 +2200,7 @@ function populateServers() {
             showing.servers.forEach(
                 server => {
 
-                    if (
-                        server.name
-                    ) {
+                    if (server.name) {
 
                         names.add(
                             server.name
@@ -2389,18 +2216,10 @@ function populateServers() {
         '<option value="">Select your name</option>';
 
 
-    [
-        ...names
-    ]
+    [...names]
         .sort(
-            (
-                a,
-                b
-            ) =>
-
-                a.localeCompare(
-                    b
-                )
+            (a, b) =>
+                a.localeCompare(b)
         )
         .forEach(
             name => {
@@ -2414,7 +2233,6 @@ function populateServers() {
                 option.value =
                     name;
 
-
                 option.textContent =
                     name;
 
@@ -2427,9 +2245,9 @@ function populateServers() {
 }
 
 
-/* =========================================================
-   SHOW PERSONAL SCHEDULE
-========================================================= */
+// =========================================================
+// SHOW SCHEDULE
+// =========================================================
 
 document
     .getElementById(
@@ -2453,21 +2271,14 @@ document
             }
 
 
-            buildSchedule(
-                name
-            );
+            buildSchedule(name);
         }
     );
 
 
-/* =========================================================
-   BUILD PERSONAL SCHEDULE
-========================================================= */
-
 function buildSchedule(name) {
 
-    const assignments =
-        [];
+    const assignments = [];
 
 
     lineupData.forEach(
@@ -2495,11 +2306,7 @@ function buildSchedule(name) {
 
 
     assignments.sort(
-        (
-            a,
-            b
-        ) =>
-
+        (a, b) =>
             a.startMinutes -
             b.startMinutes
     );
@@ -2518,10 +2325,7 @@ function buildSchedule(name) {
         "Today's schedule";
 
 
-    if (
-        assignments.length ===
-        0
-    ) {
+    if (!assignments.length) {
 
         scheduleList.innerHTML =
             "<p>No assignments found.</p>";
@@ -2548,22 +2352,17 @@ function buildSchedule(name) {
             card.className =
                 "assignment" +
                 (
-                    item.server
-                        .conditional
-                        ?
-                        " conditional"
-                        :
-                        ""
+                    item.server.conditional
+                        ? " conditional"
+                        : ""
                 );
 
 
-            let rowsHTML =
-                "";
+            let rowsHTML = "";
 
 
             if (
-                item.server
-                    .conditional
+                item.server.conditional
             ) {
 
                 rowsHTML = `
@@ -2579,6 +2378,7 @@ function buildSchedule(name) {
                     </div>
 
                 `;
+
             }
 
             else {
@@ -2662,66 +2462,26 @@ function buildSchedule(name) {
 
     scheduleSection
         .scrollIntoView({
-            behavior:
-                "smooth"
+            behavior: "smooth"
         });
 }
 
 
-/* =========================================================
-   DEBUG OUTPUT
-========================================================= */
+// =========================================================
+// FINAL DEBUG SUMMARY
+// =========================================================
 
-function showDetectedLineup(
-    columns,
-    rows
-) {
+function appendDetectedLineup() {
 
-    let output =
-        "";
+    detectedText.textContent +=
+        "\n\nFINAL INTERPRETATION\n";
 
-
-    output +=
-        "GRID DETECTION SUCCESSFUL\n";
+    detectedText.textContent +=
+        "====================================\n";
 
 
-    output +=
-        "====================================\n\n";
-
-
-    output +=
-        "Column edges:\n";
-
-
-    output +=
-        columns
-            .map(
-                value =>
-                    Math.round(
-                        value
-                    )
-            )
-            .join(", ");
-
-
-    output +=
-        "\n\n";
-
-
-    output +=
-        `Horizontal lines: ${rows.length}\n`;
-
-
-    output +=
+    detectedText.textContent +=
         `Showings detected: ${lineupData.length}\n\n`;
-
-
-    output +=
-        "DETECTED LINEUP\n";
-
-
-    output +=
-        "====================================\n\n";
 
 
     for (
@@ -2730,11 +2490,11 @@ function showDetectedLineup(
         theater++
     ) {
 
-        output +=
+        detectedText.textContent +=
             `THEATER ${theater}\n`;
 
 
-        const showings =
+        const shows =
             lineupData.filter(
                 item =>
                     item.theater ===
@@ -2742,37 +2502,24 @@ function showDetectedLineup(
             );
 
 
-        if (
-            !showings.length
-        ) {
+        if (!shows.length) {
 
-            output +=
-                "  No showings detected\n";
+            detectedText.textContent +=
+                "  None\n";
         }
 
 
-        showings.forEach(
+        shows.forEach(
             showing => {
 
-                output +=
-                    "\n";
+                detectedText.textContent +=
+                    `\n  ${showing.start} - ${showing.end}\n`;
 
 
-                output +=
-                    `  ${showing.start} - ${showing.end}\n`;
+                if (!showing.servers.length) {
 
-
-                output +=
-                    `  OCR time: "${showing.raw.time}"\n`;
-
-
-                if (
-                    !showing.servers
-                        .length
-                ) {
-
-                    output +=
-                        "  ! No servers detected\n";
+                    detectedText.textContent +=
+                        "  ! No server detected\n";
                 }
 
 
@@ -2783,73 +2530,76 @@ function showDetectedLineup(
                             server.conditional
                         ) {
 
-                            output +=
-                                `  -> (${server.name}) : ${server.rows} ONLY OVER 50\n`;
+                            detectedText.textContent +=
+
+                                `  -> (${server.name}) ` +
+                                `${server.rows} ` +
+                                `ONLY OVER 50\n`;
+
                         }
 
                         else {
 
-                            output +=
-                                `  -> ${server.name} : ${server.rows}`;
+                            detectedText.textContent +=
+
+                                `  -> ${server.name} ` +
+                                `${server.rows}`;
 
 
                             if (
-                                server.over50 &&
                                 server.over50 !==
                                 server.rows
                             ) {
 
-                                output +=
+                                detectedText.textContent +=
+
                                     ` -> ${server.over50} over 50`;
                             }
 
 
-                            output +=
+                            detectedText.textContent +=
                                 "\n";
                         }
-
                     }
                 );
-
             }
         );
 
 
-        output +=
-            "\n------------------------------------\n\n";
+        detectedText.textContent +=
+            "\n------------------------------------\n";
     }
-
-
-    detectedText.textContent =
-        output;
 }
 
 
-/* =========================================================
-   ESCAPE HTML
-========================================================= */
+// =========================================================
+// ESCAPE HTML
+// =========================================================
 
 function escapeHTML(value) {
 
-    return String(
-        value
-    )
+    return String(value)
+
         .replace(
             /&/g,
             "&amp;"
         )
+
         .replace(
             /</g,
             "&lt;"
         )
+
         .replace(
             />/g,
             "&gt;"
         )
+
         .replace(
             /"/g,
             "&quot;"
         )
+
         .replace(
             /'/g,
             "&#039;"
