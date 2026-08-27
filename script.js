@@ -1,22 +1,25 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 6 — GRID-DETECTION PARSER
+VERSION 7 — PER-CELL OCR
 ============================================================
 
-This version:
+The grid is detected first.
 
-✓ Works with different screenshot dimensions
-✓ Finds the spreadsheet automatically
-✓ Detects actual vertical grid lines
-✓ Detects actual horizontal grid lines
-✓ Uses OCR word positions inside detected cells
-✓ Does NOT assume fixed pixel coordinates
-✓ Handles 1-server = ALL ROWS
-✓ Handles 2-server row splits
-✓ Handles parenthetical third servers
-✓ Handles over-50 row changes
-✓ Sorts the final schedule chronologically
+Then instead of OCRing the entire spreadsheet at once,
+each individual TIME and SERVER cell is OCR'd separately.
+
+This makes Tesseract's job much easier.
+
+Movie titles are intentionally ignored for now because
+they aren't needed for the server's personal schedule.
+
+Rules:
+- 1 normal server = ALL ROWS
+- 2 normal servers = split using theater row assignments
+- 3rd row server = conditional, only over 50
+- Over 50 changes first/second server row groups
+- Final personal schedule sorted chronologically
 ============================================================
 */
 
@@ -69,18 +72,14 @@ const detectedText =
 
 
 let uploadedFile = null;
-
 let lineupData = [];
 
 
 /* =========================================================
-   FALLBACK THEATER ROW RULES
-
-   These are only used when OCR cannot read the row labels
-   on the left side of the spreadsheet.
+   THEATER ROW RULES
 ========================================================= */
 
-const fallbackRows = {
+const theaterRows = {
 
     1: [
         { normal: "ACE",  over50: "AD" },
@@ -143,7 +142,6 @@ imageInput.addEventListener(
 
         uploadedFile =
             imageInput.files[0];
-
 
         if (!uploadedFile) {
             return;
@@ -216,15 +214,15 @@ readButton.addEventListener(
             );
 
             return;
-
         }
 
 
         readButton.disabled =
             true;
 
+
         readButton.textContent =
-            "Reading Lineup...";
+            "Detecting Spreadsheet...";
 
 
         loading
@@ -252,14 +250,14 @@ readButton.addEventListener(
 
 
         detectedText.textContent =
-            "Preparing image...\n";
+            "Loading image...\n";
 
 
         try {
 
             /* -----------------------------------------
-               Load image
-            ------------------------------------------ */
+               LOAD IMAGE
+            ----------------------------------------- */
 
             const image =
                 await loadImage(
@@ -272,8 +270,8 @@ readButton.addEventListener(
 
 
             /* -----------------------------------------
-               Make analysis canvas
-            ------------------------------------------ */
+               CREATE PIXEL ANALYSIS
+            ----------------------------------------- */
 
             const analysis =
                 createAnalysisCanvas(
@@ -282,157 +280,114 @@ readButton.addEventListener(
 
 
             /* -----------------------------------------
-               Detect major vertical grid lines
-            ------------------------------------------ */
+               DETECT SHOWING COLUMNS
+            ----------------------------------------- */
 
-            const verticalLines =
+            const columns =
                 detectShowingColumns(
                     analysis
                 );
 
 
             detectedText.textContent +=
-                `Showing column edges found: ${verticalLines.length}\n`;
+                `Showing column edges: ${columns.length}\n`;
 
 
             if (
-                verticalLines.length !== 6
+                columns.length !== 6
             ) {
 
                 throw new Error(
-                    "Could not reliably detect the 5 showing columns. " +
-                    `Found ${verticalLines.length} column edges instead of 6.`
+                    `Expected 6 showing-column edges but detected ${columns.length}.`
                 );
 
             }
 
 
             /* -----------------------------------------
-               Detect horizontal theater grid
-            ------------------------------------------ */
+               DETECT HORIZONTAL GRID
+            ----------------------------------------- */
 
-            const horizontalLines =
+            const rows =
                 detectTheaterGrid(
                     analysis,
-                    verticalLines[0],
-                    verticalLines[5]
+                    columns[0],
+                    columns[5]
                 );
 
 
             detectedText.textContent +=
-                `Theater grid lines found: ${horizontalLines.length}\n`;
+                `Horizontal grid lines: ${rows.length}\n`;
 
 
             if (
-                horizontalLines.length !== 41
+                rows.length !== 41
             ) {
 
                 throw new Error(
-                    "Could not reliably detect the theater rows. " +
-                    `Found ${horizontalLines.length} grid lines instead of 41.`
+                    `Expected 41 horizontal grid lines but detected ${rows.length}.`
                 );
 
             }
 
 
-            /* -----------------------------------------
-               OCR image
-            ------------------------------------------ */
+            detectedText.textContent +=
+                "\nGrid detected successfully.\n";
 
             detectedText.textContent +=
-                "Starting OCR...\n";
+                "Reading individual cells...\n";
 
 
-            const processed =
-                preprocessForOCR(
-                    image
-                );
-
+            /* -----------------------------------------
+               CREATE ONE TESSERACT WORKER
+            ----------------------------------------- */
 
             const worker =
                 await Tesseract.createWorker(
                     "eng",
-                    1,
-                    {
-
-                        logger:
-                            message => {
-
-                                if (
-                                    message.status ===
-                                    "recognizing text"
-                                ) {
-
-                                    const percent =
-                                        Math.round(
-                                            message.progress *
-                                            100
-                                        );
-
-
-                                    progressBar.style.width =
-                                        percent + "%";
-
-                                }
-
-                            }
-
-                    }
+                    1
                 );
 
 
-            const result =
-                await worker.recognize(
-                    processed.canvas,
-                    undefined,
-                    {
-                        text: true,
-                        tsv: true
-                    }
+            /*
+            Every cell we're reading contains only
+            one line of text.
+            */
+
+            if (
+                Tesseract.PSM &&
+                Tesseract.PSM.SINGLE_LINE
+            ) {
+
+                await worker.setParameters({
+
+                    tessedit_pageseg_mode:
+                        Tesseract.PSM.SINGLE_LINE
+
+                });
+
+            }
+
+
+            /* -----------------------------------------
+               READ THE GRID
+            ----------------------------------------- */
+
+            lineupData =
+                await readGridCells(
+                    image,
+                    worker,
+                    columns,
+                    rows
                 );
 
 
             await worker.terminate();
 
 
-            if (
-                !result.data ||
-                !result.data.tsv
-            ) {
-
-                throw new Error(
-                    "Tesseract did not provide positional OCR data."
-                );
-
-            }
-
-
-            const words =
-                parseTSV(
-                    result.data.tsv,
-                    processed.scale
-                );
-
-
-            detectedText.textContent +=
-                `OCR words: ${words.length}\n`;
-
-
             /* -----------------------------------------
-               Parse cells
-            ------------------------------------------ */
-
-            lineupData =
-                parseDetectedGrid(
-                    words,
-                    verticalLines,
-                    horizontalLines
-                );
-
-
-            /* -----------------------------------------
-               Apply Star Cinema assignment rules
-            ------------------------------------------ */
+               APPLY BUSINESS RULES
+            ----------------------------------------- */
 
             lineupData.forEach(
                 applyAssignmentRules
@@ -440,12 +395,12 @@ readButton.addEventListener(
 
 
             /* -----------------------------------------
-               Display interpreted result
-            ------------------------------------------ */
+               DISPLAY RESULTS
+            ----------------------------------------- */
 
             showDetectedLineup(
-                verticalLines,
-                horizontalLines
+                columns,
+                rows
             );
 
 
@@ -457,8 +412,7 @@ readButton.addEventListener(
             ) {
 
                 alert(
-                    "The grid was detected, but no showtimes were successfully read. " +
-                    "Scroll to Detected Text."
+                    "The spreadsheet grid was detected, but no showtimes could be read."
                 );
 
             }
@@ -488,7 +442,7 @@ readButton.addEventListener(
 
             detectedText.textContent +=
                 "\n\nERROR\n" +
-                "====================================\n" +
+                "================================\n" +
                 (
                     error?.stack ||
                     error?.message ||
@@ -497,8 +451,7 @@ readButton.addEventListener(
 
 
             alert(
-                "There was a problem reading the lineup. " +
-                "Scroll down to Detected Text."
+                "There was a problem reading the lineup. Scroll down to Detected Text."
             );
 
         }
@@ -579,7 +532,7 @@ function loadImage(file) {
 
 
 /* =========================================================
-   ANALYSIS CANVAS
+   CREATE ANALYSIS CANVAS
 ========================================================= */
 
 function createAnalysisCanvas(image) {
@@ -681,37 +634,27 @@ function brightnessAt(
 
 
     return (
+
         analysis.data[index] +
         analysis.data[index + 1] +
         analysis.data[index + 2]
+
     ) / 3;
 
 }
 
 
 /* =========================================================
-   DETECT VERTICAL SHOWING COLUMN LINES
-
-   We are looking for:
-
-   | B | C | D | E | F |
-
-   Therefore we need SIX vertical edges.
-
-   These lines run through nearly the entire theater grid.
+   DETECT SHOWING COLUMNS
 ========================================================= */
 
 function detectShowingColumns(
     analysis
 ) {
 
-    const candidates = [];
+    const candidates =
+        [];
 
-
-    /*
-    Ignore top/bottom portions of screenshot when
-    measuring continuous vertical lines.
-    */
 
     const yStart =
         Math.floor(
@@ -727,7 +670,7 @@ function detectShowingColumns(
         );
 
 
-    const sampleCount =
+    const samples =
         Math.max(
             1,
             Math.floor(
@@ -770,18 +713,10 @@ function detectShowingColumns(
         }
 
 
-        const ratio =
-            dark /
-            sampleCount;
-
-
-        /*
-        Spreadsheet vertical lines run almost all
-        the way down the page.
-        */
-
         if (
-            ratio > 0.68
+            dark /
+            samples >
+            0.68
         ) {
 
             candidates.push(
@@ -800,35 +735,19 @@ function detectShowingColumns(
         );
 
 
-    /*
-    Remove screenshot borders / black margins.
-
-    We want actual spreadsheet column lines,
-    not x=0 or a browser-image border.
-    */
-
     lines =
         lines.filter(
             x =>
 
                 x >
-                    analysis.width *
-                    0.05 &&
+                analysis.width *
+                0.05 &&
 
                 x <
-                    analysis.width *
-                    0.995
-
+                analysis.width *
+                0.995
         );
 
-
-    /*
-    There may be more than 6 vertical lines.
-
-    Find the group of 6 with approximately equal
-    spacing, because columns B-F are consistently
-    sized.
-    */
 
     return findBestColumnSet(
         lines
@@ -838,12 +757,10 @@ function detectShowingColumns(
 
 
 /* =========================================================
-   FIND BEST 6 COLUMN EDGES
+   FIND THE FIVE SHOWING COLUMNS
 ========================================================= */
 
-function findBestColumnSet(
-    lines
-) {
+function findBestColumnSet(lines) {
 
     if (
         lines.length <
@@ -858,6 +775,7 @@ function findBestColumnSet(
     let best =
         null;
 
+
     let bestScore =
         Infinity;
 
@@ -865,7 +783,7 @@ function findBestColumnSet(
     for (
         let start = 0;
         start <=
-            lines.length - 6;
+        lines.length - 6;
         start++
     ) {
 
@@ -876,7 +794,8 @@ function findBestColumnSet(
             );
 
 
-        const gaps = [];
+        const gaps =
+            [];
 
 
         for (
@@ -895,8 +814,8 @@ function findBestColumnSet(
 
         const average =
             gaps.reduce(
-                (sum, value) =>
-                    sum + value,
+                (a, b) =>
+                    a + b,
                 0
             ) /
             gaps.length;
@@ -913,10 +832,10 @@ function findBestColumnSet(
 
         const variance =
             gaps.reduce(
-                (sum, value) => {
+                (sum, gap) => {
 
                     const difference =
-                        value -
+                        gap -
                         average;
 
 
@@ -932,25 +851,20 @@ function findBestColumnSet(
             gaps.length;
 
 
-        const coefficient =
+        const score =
             Math.sqrt(
                 variance
             ) /
             average;
 
 
-        /*
-        The showing columns don't have to be
-        perfectly identical, just reasonably close.
-        */
-
         if (
-            coefficient <
+            score <
             bestScore
         ) {
 
             bestScore =
-                coefficient;
+                score;
 
             best =
                 set;
@@ -963,7 +877,7 @@ function findBestColumnSet(
     if (
         !best ||
         bestScore >
-            0.15
+        0.15
     ) {
 
         return [];
@@ -977,21 +891,7 @@ function findBestColumnSet(
 
 
 /* =========================================================
-   DETECT HORIZONTAL THEATER GRID
-
-   Each theater contributes 5 row heights:
-
-   Movie
-   Time
-   Server 1
-   Server 2
-   Server 3
-
-   Across 8 theaters that produces:
-
-   41 boundary lines
-
-   because neighboring theaters share one boundary.
+   DETECT THEATER GRID
 ========================================================= */
 
 function detectTheaterGrid(
@@ -1005,24 +905,18 @@ function detectTheaterGrid(
 
 
     const xStart =
-        Math.max(
-            0,
-            Math.floor(
-                left + 2
-            )
+        Math.floor(
+            left + 2
         );
 
 
     const xEnd =
-        Math.min(
-            analysis.width - 1,
-            Math.ceil(
-                right - 2
-            )
+        Math.ceil(
+            right - 2
         );
 
 
-    const sampleWidth =
+    const samples =
         Math.max(
             1,
             Math.floor(
@@ -1065,18 +959,10 @@ function detectTheaterGrid(
         }
 
 
-        const ratio =
-            dark /
-            sampleWidth;
-
-
-        /*
-        Real horizontal spreadsheet borders cross
-        almost all five showing columns.
-        */
-
         if (
-            ratio > 0.60
+            dark /
+            samples >
+            0.60
         ) {
 
             candidates.push(
@@ -1095,22 +981,17 @@ function detectTheaterGrid(
         );
 
 
-    /*
-    Ignore screenshot top/bottom borders.
-    */
-
     lines =
         lines.filter(
             y =>
 
                 y >
-                    analysis.height *
-                    0.025 &&
+                analysis.height *
+                0.025 &&
 
                 y <
-                    analysis.height *
-                    0.985
-
+                analysis.height *
+                0.985
         );
 
 
@@ -1122,12 +1003,10 @@ function detectTheaterGrid(
 
 
 /* =========================================================
-   FIND THE REPEATING 41-LINE THEATER GRID
+   FIND REPEATING 41-LINE GRID
 ========================================================= */
 
-function findBestTheaterGrid(
-    lines
-) {
+function findBestTheaterGrid(lines) {
 
     if (
         lines.length <
@@ -1139,8 +1018,9 @@ function findBestTheaterGrid(
     }
 
 
-    let bestSet =
+    let best =
         null;
+
 
     let bestScore =
         Infinity;
@@ -1149,7 +1029,7 @@ function findBestTheaterGrid(
     for (
         let start = 0;
         start <=
-            lines.length - 41;
+        lines.length - 41;
         start++
     ) {
 
@@ -1179,10 +1059,6 @@ function findBestTheaterGrid(
                 set[i];
 
 
-            /*
-            Reject bizarre gaps.
-            */
-
             if (
                 gap <= 0
             ) {
@@ -1207,23 +1083,11 @@ function findBestTheaterGrid(
         }
 
 
-        /*
-        Every theater follows:
-
-        large movie row
-        short time row
-        short server row
-        short server row
-        short server row
-
-        Repeated 8 times.
-        */
-
-
         const movieGaps =
             [];
 
-        const smallGaps =
+
+        const smallerGaps =
             [];
 
 
@@ -1245,7 +1109,7 @@ function findBestTheaterGrid(
 
                 else {
 
-                    smallGaps.push(
+                    smallerGaps.push(
                         gap
                     );
 
@@ -1263,7 +1127,7 @@ function findBestTheaterGrid(
 
         const smallMedian =
             median(
-                smallGaps
+                smallerGaps
             );
 
 
@@ -1275,10 +1139,6 @@ function findBestTheaterGrid(
 
         }
 
-
-        /*
-        Movie-title row should be substantially taller.
-        */
 
         if (
             movieMedian <
@@ -1309,7 +1169,7 @@ function findBestTheaterGrid(
         );
 
 
-        smallGaps.forEach(
+        smallerGaps.forEach(
             gap => {
 
                 score +=
@@ -1331,7 +1191,7 @@ function findBestTheaterGrid(
             bestScore =
                 score;
 
-            bestSet =
+            best =
                 set;
 
         }
@@ -1340,7 +1200,7 @@ function findBestTheaterGrid(
 
 
     return (
-        bestSet ||
+        best ||
         []
     );
 
@@ -1348,10 +1208,7 @@ function findBestTheaterGrid(
 
 
 /* =========================================================
-   CLUSTER NEARBY BLACK PIXELS INTO SINGLE LINES
-
-   A 2-pixel-thick border shouldn't be treated as two
-   separate grid lines.
+   CLUSTER LINE PIXELS
 ========================================================= */
 
 function clusterPositions(
@@ -1435,7 +1292,6 @@ function clusterPositions(
                 0
             ) /
             cluster.length
-
     );
 
 }
@@ -1466,12 +1322,14 @@ function median(values) {
 
     const middle =
         Math.floor(
-            sorted.length / 2
+            sorted.length /
+            2
         );
 
 
     if (
-        sorted.length % 2
+        sorted.length %
+        2
     ) {
 
         return sorted[
@@ -1482,27 +1340,485 @@ function median(values) {
 
 
     return (
+
         sorted[
             middle - 1
         ] +
+
         sorted[
             middle
         ]
+
     ) / 2;
 
 }
 
 
 /* =========================================================
-   OCR PREPROCESSING
+   READ ALL GRID CELLS
+
+   This is the important Version 7 change.
+
+   Tesseract receives tiny individual cells instead of
+   the entire spreadsheet.
 ========================================================= */
 
-function preprocessForOCR(
-    image
+async function readGridCells(
+    image,
+    worker,
+    columns,
+    rows
 ) {
 
+    const showings =
+        [];
+
+
+    /*
+    40 possible showtime cells.
+    */
+
+    let processedCells =
+        0;
+
+
+    const maximumCells =
+        40;
+
+
+    for (
+        let theater = 1;
+        theater <= 8;
+        theater++
+    ) {
+
+        const base =
+            (
+                theater - 1
+            ) * 5;
+
+
+        /*
+        Grid structure:
+
+        base     -> movie top
+        base + 1 -> movie/time divider
+        base + 2 -> time/server1 divider
+        base + 3 -> server1/server2 divider
+        base + 4 -> server2/server3 divider
+        base + 5 -> theater bottom
+        */
+
+        const timeTop =
+            rows[
+                base + 1
+            ];
+
+
+        const timeBottom =
+            rows[
+                base + 2
+            ];
+
+
+        const server1Top =
+            rows[
+                base + 2
+            ];
+
+
+        const server1Bottom =
+            rows[
+                base + 3
+            ];
+
+
+        const server2Top =
+            rows[
+                base + 3
+            ];
+
+
+        const server2Bottom =
+            rows[
+                base + 4
+            ];
+
+
+        const server3Top =
+            rows[
+                base + 4
+            ];
+
+
+        const server3Bottom =
+            rows[
+                base + 5
+            ];
+
+
+        for (
+            let column = 0;
+            column < 5;
+            column++
+        ) {
+
+            processedCells++;
+
+
+            readButton.textContent =
+                `Reading ${processedCells}/${maximumCells}...`;
+
+
+            progressBar.style.width =
+                (
+                    processedCells /
+                    maximumCells *
+                    100
+                ) +
+                "%";
+
+
+            const left =
+                columns[
+                    column
+                ];
+
+
+            const right =
+                columns[
+                    column + 1
+                ];
+
+
+            /*
+            -----------------------------------------
+            READ TIME CELL FIRST
+            -----------------------------------------
+            */
+
+            const rawTime =
+                await ocrSingleCell(
+                    worker,
+                    image,
+                    left,
+                    timeTop,
+                    right,
+                    timeBottom
+                );
+
+
+            const parsedTime =
+                parseShowtime(
+                    rawTime
+                );
+
+
+            /*
+            No valid time = this is an empty showing slot.
+
+            We don't waste time OCRing the server rows.
+            */
+
+            if (
+                !parsedTime
+            ) {
+
+                continue;
+
+            }
+
+
+            /*
+            -----------------------------------------
+            READ SERVER ROW 1
+            -----------------------------------------
+            */
+
+            const rawServer1 =
+                await ocrSingleCell(
+                    worker,
+                    image,
+                    left,
+                    server1Top,
+                    right,
+                    server1Bottom
+                );
+
+
+            /*
+            -----------------------------------------
+            READ SERVER ROW 2
+            -----------------------------------------
+            */
+
+            const rawServer2 =
+                await ocrSingleCell(
+                    worker,
+                    image,
+                    left,
+                    server2Top,
+                    right,
+                    server2Bottom
+                );
+
+
+            /*
+            -----------------------------------------
+            READ CONDITIONAL SERVER ROW
+            -----------------------------------------
+            */
+
+            const rawServer3 =
+                await ocrSingleCell(
+                    worker,
+                    image,
+                    left,
+                    server3Top,
+                    right,
+                    server3Bottom
+                );
+
+
+            const servers =
+                [];
+
+
+            const server1 =
+                cleanServerName(
+                    rawServer1
+                );
+
+
+            const server2 =
+                cleanServerName(
+                    rawServer2
+                );
+
+
+            const server3 =
+                cleanServerName(
+                    rawServer3
+                );
+
+
+            if (
+                server1
+            ) {
+
+                servers.push({
+
+                    name:
+                        server1,
+
+                    position:
+                        1,
+
+                    conditional:
+                        false,
+
+                    rows:
+                        "",
+
+                    over50:
+                        ""
+
+                });
+
+            }
+
+
+            if (
+                server2
+            ) {
+
+                servers.push({
+
+                    name:
+                        server2,
+
+                    position:
+                        2,
+
+                    conditional:
+                        false,
+
+                    rows:
+                        "",
+
+                    over50:
+                        ""
+
+                });
+
+            }
+
+
+            if (
+                server3
+            ) {
+
+                servers.push({
+
+                    name:
+                        server3,
+
+                    position:
+                        3,
+
+                    conditional:
+                        true,
+
+                    rows:
+                        "",
+
+                    over50:
+                        ""
+
+                });
+
+            }
+
+
+            showings.push({
+
+                theater,
+
+                start:
+                    parsedTime.start,
+
+                end:
+                    parsedTime.end,
+
+                startMinutes:
+                    parsedTime.startMinutes,
+
+                endMinutes:
+                    parsedTime.endMinutes,
+
+                servers,
+
+                rules:
+                    theaterRows[
+                        theater
+                    ],
+
+                /*
+                Useful while calibrating OCR.
+                */
+
+                raw: {
+
+                    time:
+                        rawTime,
+
+                    server1:
+                        rawServer1,
+
+                    server2:
+                        rawServer2,
+
+                    server3:
+                        rawServer3
+
+                }
+
+            });
+
+        }
+
+    }
+
+
+    return showings;
+
+}
+
+
+/* =========================================================
+   OCR ONE CELL
+
+   Crops out the spreadsheet borders and enlarges the
+   actual cell text before sending it to Tesseract.
+========================================================= */
+
+async function ocrSingleCell(
+    worker,
+    image,
+    left,
+    top,
+    right,
+    bottom
+) {
+
+    const originalWidth =
+        right -
+        left;
+
+
+    const originalHeight =
+        bottom -
+        top;
+
+
+    /*
+    Remove borders.
+
+    Important because the black spreadsheet lines were
+    confusing Tesseract.
+    */
+
+    const insetX =
+        Math.max(
+            2,
+            originalWidth *
+            0.035
+        );
+
+
+    const insetY =
+        Math.max(
+            1,
+            originalHeight *
+            0.10
+        );
+
+
+    const cropLeft =
+        left +
+        insetX;
+
+
+    const cropTop =
+        top +
+        insetY;
+
+
+    const cropWidth =
+        Math.max(
+            2,
+            originalWidth -
+            insetX *
+            2
+        );
+
+
+    const cropHeight =
+        Math.max(
+            2,
+            originalHeight -
+            insetY *
+            2
+        );
+
+
+    /*
+    Tiny spreadsheet text benefits greatly from
+    enlargement.
+    */
+
     const scale =
-        2;
+        4;
 
 
     const canvas =
@@ -1512,36 +1828,76 @@ function preprocessForOCR(
 
 
     canvas.width =
-        image.width *
-        scale;
+        Math.max(
+            1,
+            Math.round(
+                cropWidth *
+                scale
+            )
+        );
 
 
     canvas.height =
-        image.height *
-        scale;
+        Math.max(
+            1,
+            Math.round(
+                cropHeight *
+                scale
+            )
+        );
 
 
     const ctx =
         canvas.getContext(
             "2d",
             {
-                willReadFrequently: true
+                willReadFrequently:
+                    true
             }
         );
 
 
-    ctx.imageSmoothingEnabled =
-        false;
+    /*
+    White background.
+    */
+
+    ctx.fillStyle =
+        "white";
 
 
-    ctx.drawImage(
-        image,
+    ctx.fillRect(
         0,
         0,
         canvas.width,
         canvas.height
     );
 
+
+    ctx.imageSmoothingEnabled =
+        true;
+
+
+    ctx.drawImage(
+
+        image,
+
+        cropLeft,
+        cropTop,
+        cropWidth,
+        cropHeight,
+
+        0,
+        0,
+        canvas.width,
+        canvas.height
+
+    );
+
+
+    /*
+    Convert cell to high-contrast grayscale without
+    retaining the spreadsheet border.
+    */
 
     const imageData =
         ctx.getImageData(
@@ -1562,35 +1918,25 @@ function preprocessForOCR(
         i += 4
     ) {
 
-        const r =
-            pixels[i];
+        const gray =
 
-        const g =
-            pixels[i + 1];
+            0.299 *
+            pixels[i] +
 
-        const b =
+            0.587 *
+            pixels[i + 1] +
+
+            0.114 *
             pixels[i + 2];
 
 
-        const gray =
-            (
-                0.299 *
-                    r +
-                0.587 *
-                    g +
-                0.114 *
-                    b
-            );
-
-
         /*
-        Preserve text while turning gray spreadsheet
-        backgrounds white.
+        Slightly gentler threshold than Version 6.
         */
 
         const value =
             gray <
-            180
+            205
                 ? 0
                 : 255;
 
@@ -1614,751 +1960,31 @@ function preprocessForOCR(
     );
 
 
-    return {
-
-        canvas,
-
-        scale
-
-    };
-
-}
-
-
-/* =========================================================
-   PARSE TESSERACT TSV
-========================================================= */
-
-function parseTSV(
-    tsv,
-    scale
-) {
-
-    if (!tsv) {
-        return [];
-    }
-
-
-    const lines =
-        tsv
-            .trim()
-            .split("\n");
-
-
-    if (
-        lines.length <
-        2
-    ) {
-
-        return [];
-
-    }
-
-
-    const headers =
-        lines[0]
-            .split("\t");
-
-
-    const index =
-        {};
-
-
-    headers.forEach(
-        (
-            field,
-            i
-        ) => {
-
-            index[field] =
-                i;
-
-        }
-    );
-
-
-    const words =
-        [];
-
-
-    for (
-        let i = 1;
-        i < lines.length;
-        i++
-    ) {
-
-        const values =
-            lines[i]
-                .split("\t");
-
-
-        const text =
-            (
-                values[
-                    index.text
-                ] ||
-                ""
-            ).trim();
-
-
-        if (!text) {
-            continue;
-        }
-
-
-        const confidence =
-            Number(
-                values[
-                    index.conf
-                ]
-            );
-
-
-        if (
-            Number.isFinite(
-                confidence
-            ) &&
-            confidence < 10
-        ) {
-
-            continue;
-
-        }
-
-
-        const left =
-            Number(
-                values[
-                    index.left
-                ]
-            ) /
-            scale;
-
-
-        const top =
-            Number(
-                values[
-                    index.top
-                ]
-            ) /
-            scale;
-
-
-        const width =
-            Number(
-                values[
-                    index.width
-                ]
-            ) /
-            scale;
-
-
-        const height =
-            Number(
-                values[
-                    index.height
-                ]
-            ) /
-            scale;
-
-
-        if (
-            !Number.isFinite(
-                left
-            ) ||
-            !Number.isFinite(
-                top
-            ) ||
-            !Number.isFinite(
-                width
-            ) ||
-            !Number.isFinite(
-                height
-            )
-        ) {
-
-            continue;
-
-        }
-
-
-        words.push({
-
-            text,
-
-            confidence,
-
-            left,
-
-            top,
-
-            width,
-
-            height,
-
-            centerX:
-                left +
-                width / 2,
-
-            centerY:
-                top +
-                height / 2
-
-        });
-
-    }
-
-
-    return words;
-
-}
-
-
-/* =========================================================
-   PARSE THE DETECTED GRID
-
-   41 horizontal lines means:
-
-   Theater 1 = lines 0..5
-   Theater 2 = lines 5..10
-   Theater 3 = lines 10..15
-   etc.
-========================================================= */
-
-function parseDetectedGrid(
-    words,
-    columns,
-    rows
-) {
-
     const result =
-        [];
-
-
-    /*
-    Approximate width of theater-label column A.
-
-    We infer it from the showing columns, rather than
-    using a fixed coordinate.
-    */
-
-    const columnWidths =
-        [];
-
-
-    for (
-        let i = 0;
-        i < 5;
-        i++
-    ) {
-
-        columnWidths.push(
-            columns[i + 1] -
-            columns[i]
-        );
-
-    }
-
-
-    const showingColumnWidth =
-        median(
-            columnWidths
+        await worker.recognize(
+            canvas
         );
 
 
-    const labelLeft =
-        Math.max(
-            0,
-            columns[0] -
-            showingColumnWidth
-        );
-
-
-    for (
-        let theater = 1;
-        theater <= 8;
-        theater++
-    ) {
-
-        const base =
-            (
-                theater - 1
-            ) * 5;
-
-
-        /*
-        Actual detected rows:
-        */
-
-        const movieTop =
-            rows[base];
-
-        const movieBottom =
-            rows[base + 1];
-
-
-        const timeTop =
-            rows[base + 1];
-
-        const timeBottom =
-            rows[base + 2];
-
-
-        const server1Top =
-            rows[base + 2];
-
-        const server1Bottom =
-            rows[base + 3];
-
-
-        const server2Top =
-            rows[base + 3];
-
-        const server2Bottom =
-            rows[base + 4];
-
-
-        const server3Top =
-            rows[base + 4];
-
-        const server3Bottom =
-            rows[base + 5];
-
-
-        const serverRows =
-            [
-                [
-                    server1Top,
-                    server1Bottom
-                ],
-
-                [
-                    server2Top,
-                    server2Bottom
-                ],
-
-                [
-                    server3Top,
-                    server3Bottom
-                ]
-            ];
-
-
-        /*
-        Read authoritative row labels from column A.
-        */
-
-        const rules =
-            [];
-
-
-        for (
-            let rowIndex = 0;
-            rowIndex < 3;
-            rowIndex++
-        ) {
-
-            const label =
-                textInsideCell(
-                    words,
-
-                    labelLeft,
-
-                    serverRows[
-                        rowIndex
-                    ][0],
-
-                    columns[0],
-
-                    serverRows[
-                        rowIndex
-                    ][1]
-                );
-
-
-            const parsed =
-                parseRowAssignment(
-                    label,
-                    rowIndex
-                );
-
-
-            rules.push(
-                parsed ||
-                {
-                    ...fallbackRows[
-                        theater
-                    ][
-                        rowIndex
-                    ]
-                }
-            );
-
-        }
-
-
-        /*
-        Five possible showing columns.
-        */
-
-        for (
-            let column = 0;
-            column < 5;
-            column++
-        ) {
-
-            const left =
-                columns[
-                    column
-                ];
-
-            const right =
-                columns[
-                    column + 1
-                ];
-
-
-            const movieRaw =
-                textInsideCell(
-                    words,
-                    left,
-                    movieTop,
-                    right,
-                    movieBottom
-                );
-
-
-            const timeRaw =
-                textInsideCell(
-                    words,
-                    left,
-                    timeTop,
-                    right,
-                    timeBottom
-                );
-
-
-            const parsedTime =
-                parseShowtime(
-                    timeRaw
-                );
-
-
-            /*
-            If the time cell isn't a recognizable
-            showtime, this is probably a blank showing
-            cell.
-            */
-
-            if (
-                !parsedTime
-            ) {
-
-                continue;
-
-            }
-
-
-            const servers =
-                [];
-
-
-            for (
-                let serverIndex = 0;
-                serverIndex < 3;
-                serverIndex++
-            ) {
-
-                const raw =
-                    textInsideCell(
-                        words,
-
-                        left,
-
-                        serverRows[
-                            serverIndex
-                        ][0],
-
-                        right,
-
-                        serverRows[
-                            serverIndex
-                        ][1]
-                    );
-
-
-                const name =
-                    cleanServerName(
-                        raw
-                    );
-
-
-                if (!name) {
-                    continue;
-                }
-
-
-                servers.push({
-
-                    name,
-
-                    position:
-                        serverIndex +
-                        1,
-
-                    /*
-                    The third spreadsheet server row is
-                    the parenthetical conditional server.
-                    */
-
-                    conditional:
-                        serverIndex === 2,
-
-                    rows:
-                        "",
-
-                    over50:
-                        ""
-
-                });
-
-            }
-
-
-            result.push({
-
-                theater,
-
-                movie:
-                    cleanMovieTitle(
-                        movieRaw
-                    ),
-
-                start:
-                    parsedTime.start,
-
-                end:
-                    parsedTime.end,
-
-                startMinutes:
-                    parsedTime.startMinutes,
-
-                endMinutes:
-                    parsedTime.endMinutes,
-
-                servers,
-
-                rules
-
-            });
-
-        }
-
-    }
-
-
-    return result;
-
-}
-
-
-/* =========================================================
-   TEXT INSIDE A DETECTED CELL
-========================================================= */
-
-function textInsideCell(
-    words,
-    left,
-    top,
-    right,
-    bottom
-) {
-
-    const width =
-        right -
-        left;
-
-
-    const height =
-        bottom -
-        top;
-
-
-    /*
-    Slight inset avoids capturing border artifacts.
-    */
-
-    const insetX =
-        Math.max(
-            1,
-            width *
-            0.015
-        );
-
-
-    const insetY =
-        Math.max(
-            1,
-            height *
-            0.05
-        );
-
-
-    const matches =
-        words.filter(
-            word =>
-
-                word.centerX >
-                    left +
-                    insetX &&
-
-                word.centerX <
-                    right -
-                    insetX &&
-
-                word.centerY >
-                    top +
-                    insetY &&
-
-                word.centerY <
-                    bottom -
-                    insetY
-
-        );
-
-
-    matches.sort(
-        (
-            a,
-            b
-        ) => {
-
-            const yDifference =
-                a.centerY -
-                b.centerY;
-
-
-            if (
-                Math.abs(
-                    yDifference
-                ) > 5
-            ) {
-
-                return yDifference;
-
-            }
-
-
-            return (
-                a.left -
-                b.left
-            );
-
-        }
-    );
-
-
-    return matches
-        .map(
-            word =>
-                word.text
+    return (
+        result.data?.text ||
+        ""
+    )
+        .replace(
+            /\n/g,
+            " "
         )
-        .join(" ")
+        .replace(
+            /\s+/g,
+            " "
+        )
         .trim();
 
 }
 
 
 /* =========================================================
-   PARSE THEATER ROW LABEL
-
-   Examples:
-
-   ACEG (ADG)
-   BDFH (BEH)
-   (CF)
-========================================================= */
-
-function parseRowAssignment(
-    value,
-    rowIndex
-) {
-
-    if (!value) {
-        return null;
-    }
-
-
-    let cleaned =
-        value
-            .toUpperCase()
-            .replace(
-                /[^A-H()]/g,
-                ""
-            );
-
-
-    if (!cleaned) {
-        return null;
-    }
-
-
-    const groups =
-        cleaned.match(
-            /[A-H]+/g
-        );
-
-
-    if (
-        !groups ||
-        !groups.length
-    ) {
-
-        return null;
-
-    }
-
-
-    /*
-    Third row:
-    (CF)
-
-    Same letters are used when activated.
-    */
-
-    if (
-        rowIndex === 2
-    ) {
-
-        return {
-
-            normal:
-                groups[0],
-
-            over50:
-                groups[0]
-
-        };
-
-    }
-
-
-    return {
-
-        normal:
-            groups[0],
-
-        over50:
-            groups[1] ||
-            groups[0]
-
-    };
-
-}
-
-
-/* =========================================================
-   APPLY STAR CINEMA ASSIGNMENT RULES
+   APPLY ASSIGNMENT RULES
 ========================================================= */
 
 function applyAssignmentRules(
@@ -2380,13 +2006,14 @@ function applyAssignmentRules(
 
 
     /*
-    ========================================================
-    ONE NORMAL SERVER
+    ---------------------------------------------------------
+    ONE SERVER
+    ---------------------------------------------------------
 
-    One server means the ENTIRE theater.
+    Regardless of whether their name was physically in
+    the first or second spreadsheet assignment row:
 
-    Their physical spreadsheet row does NOT matter.
-    ========================================================
+    They get the entire theater.
     */
 
     if (
@@ -2401,11 +2028,6 @@ function applyAssignmentRules(
             "ALL ROWS";
 
 
-        /*
-        If nobody conditional is listed, they keep
-        the entire theater regardless of occupancy.
-        */
-
         if (
             conditionalServers.length === 0
         ) {
@@ -2416,12 +2038,6 @@ function applyAssignmentRules(
         }
 
         else {
-
-            /*
-            If a parenthetical third server joins over 50,
-            the original server keeps the over-50 portions
-            assigned to the first two server groups.
-            */
 
             const first =
                 showing.rules[0]
@@ -2447,11 +2063,9 @@ function applyAssignmentRules(
 
 
     /*
-    ========================================================
-    TWO NORMAL SERVERS
-
-    Their physical first/second assignment position matters.
-    ========================================================
+    ---------------------------------------------------------
+    TWO SERVERS
+    ---------------------------------------------------------
     */
 
     else if (
@@ -2460,6 +2074,11 @@ function applyAssignmentRules(
 
         normalServers.forEach(
             server => {
+
+                /*
+                Server position corresponds to spreadsheet
+                row 1 or row 2.
+                */
 
                 const ruleIndex =
                     Math.min(
@@ -2476,13 +2095,11 @@ function applyAssignmentRules(
 
 
                 server.rows =
-                    rule?.normal ||
-                    "";
+                    rule.normal;
 
 
                 server.over50 =
-                    rule?.over50 ||
-                    server.rows;
+                    rule.over50;
 
             }
         );
@@ -2491,11 +2108,9 @@ function applyAssignmentRules(
 
 
     /*
-    ========================================================
-    THIRD / PARENTHETICAL SERVER
-
-    Only joins when occupancy goes above 50.
-    ========================================================
+    ---------------------------------------------------------
+    CONDITIONAL THIRD SERVER
+    ---------------------------------------------------------
     */
 
     conditionalServers.forEach(
@@ -2506,9 +2121,8 @@ function applyAssignmentRules(
 
 
             server.rows =
-                rule?.over50 ||
-                rule?.normal ||
-                "CF";
+                rule.over50 ||
+                rule.normal;
 
 
             server.over50 =
@@ -2521,7 +2135,7 @@ function applyAssignmentRules(
 
 
 /* =========================================================
-   COMBINE ROWS
+   COMBINE ROW LETTERS
 ========================================================= */
 
 function combineRows(
@@ -2534,12 +2148,11 @@ function combineRows(
             first +
             second
         )
-            .toUpperCase()
             .split("")
             .filter(
-                character =>
-                    /[A-H]/.test(
-                        character
+                value =>
+                    /[A-H]/i.test(
+                        value
                     )
             );
 
@@ -2559,9 +2172,7 @@ function combineRows(
    CLEAN SERVER NAME
 ========================================================= */
 
-function cleanServerName(
-    value
-) {
+function cleanServerName(value) {
 
     if (!value) {
         return "";
@@ -2585,6 +2196,10 @@ function cleanServerName(
             .trim();
 
 
+    /*
+    Empty / garbage
+    */
+
     if (
         cleaned.length <
         2 ||
@@ -2598,7 +2213,7 @@ function cleanServerName(
 
 
     /*
-    Don't mistake assignment letters for names.
+    Row codes aren't names.
     */
 
     if (
@@ -2612,36 +2227,15 @@ function cleanServerName(
     }
 
 
-    const forbidden =
-        [
-            "THEATER",
-            "SEATING",
-            "CAPACITY",
-            "TODAY",
-            "MOVIE"
-        ];
-
-
-    if (
-        forbidden.includes(
-            cleaned.toUpperCase()
-        )
-    ) {
-
-        return "";
-
-    }
-
-
     /*
-    A server name should be short.
+    Names on this sheet are short.
     */
 
     if (
         cleaned
             .split(" ")
             .length >
-        3
+        2
     ) {
 
         return "";
@@ -2661,7 +2255,6 @@ function cleanServerName(
                 word
                     .slice(1)
                     .toLowerCase()
-
         )
         .join(" ");
 
@@ -2669,39 +2262,10 @@ function cleanServerName(
 
 
 /* =========================================================
-   CLEAN MOVIE
+   SHOWTIME PARSER
 ========================================================= */
 
-function cleanMovieTitle(
-    value
-) {
-
-    if (!value) {
-        return "";
-    }
-
-
-    return value
-        .replace(
-            /[|_[\]{}]/g,
-            " "
-        )
-        .replace(
-            /\s+/g,
-            " "
-        )
-        .trim();
-
-}
-
-
-/* =========================================================
-   PARSE SHOWTIME
-========================================================= */
-
-function parseShowtime(
-    value
-) {
+function parseShowtime(value) {
 
     if (!value) {
         return null;
@@ -2726,19 +2290,38 @@ function parseShowtime(
 
 
     /*
-    Common OCR substitutions around digits.
+    OCR corrections.
+
+    O / o between digits -> 0
     */
 
     text =
-        text
-            .replace(
-                /(?<=\d)o(?=\d)/g,
-                "0"
-            )
-            .replace(
-                /(?<=\d)l(?=\d)/g,
-                "1"
-            );
+        text.replace(
+            /(?<=\d)[oO](?=\d)/g,
+            "0"
+        );
+
+
+    /*
+    OCR sometimes reads I/l as 1.
+    */
+
+    text =
+        text.replace(
+            /(?<=\d)[lI](?=\d)/g,
+            "1"
+        );
+
+
+    /*
+    Remove junk outside characters useful in a time.
+    */
+
+    text =
+        text.replace(
+            /[^0-9:apm-]/g,
+            ""
+        );
 
 
     const match =
@@ -2776,7 +2359,12 @@ function parseShowtime(
         );
 
 
+    /*
+    Reject impossible OCR.
+    */
+
     if (
+
         startHour <
         1 ||
 
@@ -2794,6 +2382,7 @@ function parseShowtime(
 
         endMinute >
         59
+
     ) {
 
         return null;
@@ -2814,13 +2403,17 @@ function parseShowtime(
 
 
     /*
-    Infer start AM/PM from Star Cinema schedule.
-
-    10-11 = morning
-    12 onward through evening = PM
+    ---------------------------------------------------------
+    INFER START PERIOD
+    ---------------------------------------------------------
     */
 
     if (!startPeriod) {
+
+        /*
+        Star Cinema first shows beginning at 10 or 11
+        are AM.
+        */
 
         if (
             startHour === 10 ||
@@ -2843,26 +2436,47 @@ function parseShowtime(
 
 
     /*
-    Infer ending period.
+    ---------------------------------------------------------
+    INFER END PERIOD
+    ---------------------------------------------------------
     */
 
     if (!endPeriod) {
 
         /*
-        Late evening show ending at 12/1/2
-        crosses midnight.
+        Morning movie beginning 10/11 and ending 12-6
+        ends in the afternoon.
+
+        Example:
+
+        11:00a - 1:00
         */
 
         if (
-            startPeriod ===
-            "PM" &&
-            startHour >=
-            7 &&
+            startPeriod === "AM" &&
             (
-                endHour ===
-                12 ||
-                endHour <=
-                2
+                endHour === 12 ||
+                endHour <
+                startHour
+            )
+        ) {
+
+            endPeriod =
+                "PM";
+
+        }
+
+
+        /*
+        Late PM showing ending 12/1/2 crosses midnight.
+        */
+
+        else if (
+            startPeriod === "PM" &&
+            startHour >= 7 &&
+            (
+                endHour === 12 ||
+                endHour <= 2
             )
         ) {
 
@@ -2870,6 +2484,7 @@ function parseShowtime(
                 "AM";
 
         }
+
 
         else {
 
@@ -2896,6 +2511,10 @@ function parseShowtime(
             endPeriod
         );
 
+
+    /*
+    End after midnight.
+    */
 
     if (
         endMinutes <
@@ -2935,12 +2554,10 @@ function parseShowtime(
 
 
 /* =========================================================
-   PERIOD
+   TIME HELPERS
 ========================================================= */
 
-function periodFromMarker(
-    marker
-) {
+function periodFromMarker(marker) {
 
     if (!marker) {
         return "";
@@ -2978,10 +2595,6 @@ function periodFromMarker(
 }
 
 
-/* =========================================================
-   TIME TO MINUTES
-========================================================= */
-
 function clockMinutes(
     hour,
     minute,
@@ -2993,10 +2606,8 @@ function clockMinutes(
 
 
     if (
-        period ===
-        "PM" &&
-        adjusted !==
-        12
+        period === "PM" &&
+        adjusted !== 12
     ) {
 
         adjusted +=
@@ -3006,10 +2617,8 @@ function clockMinutes(
 
 
     if (
-        period ===
-        "AM" &&
-        adjusted ===
-        12
+        period === "AM" &&
+        adjusted === 12
     ) {
 
         adjusted =
@@ -3026,10 +2635,6 @@ function clockMinutes(
 
 }
 
-
-/* =========================================================
-   FORMAT TIME
-========================================================= */
 
 function formatTime(
     hour,
@@ -3131,7 +2736,7 @@ function populateServers() {
 
 
 /* =========================================================
-   SHOW SCHEDULE BUTTON
+   SHOW PERSONAL SCHEDULE
 ========================================================= */
 
 document
@@ -3169,9 +2774,7 @@ document
    BUILD PERSONAL SCHEDULE
 ========================================================= */
 
-function buildSchedule(
-    name
-) {
+function buildSchedule(name) {
 
     const assignments =
         [];
@@ -3204,10 +2807,6 @@ function buildSchedule(
         }
     );
 
-
-    /*
-    Chronological order.
-    */
 
     assignments.sort(
         (
@@ -3273,20 +2872,16 @@ function buildSchedule(
                 );
 
 
-            let rowHTML =
+            let rowsHTML =
                 "";
 
-
-            /*
-            Parenthetical / conditional server.
-            */
 
             if (
                 item.server
                     .conditional
             ) {
 
-                rowHTML = `
+                rowsHTML = `
 
                     <div class="conditional-label">
                         ONLY IF OVER 50 GUESTS
@@ -3304,7 +2899,7 @@ function buildSchedule(
 
             else {
 
-                rowHTML = `
+                rowsHTML = `
 
                     <div class="rows">
                         ${escapeHTML(
@@ -3316,15 +2911,12 @@ function buildSchedule(
 
 
                 if (
-                    item.server
-                        .over50 &&
-                    item.server
-                        .over50 !==
-                    item.server
-                        .rows
+                    item.server.over50 &&
+                    item.server.over50 !==
+                    item.server.rows
                 ) {
 
-                    rowHTML += `
+                    rowsHTML += `
 
                         <div class="over50">
 
@@ -3364,30 +2956,12 @@ function buildSchedule(
 
                 <div class="assignment-title">
 
-                    Theater
-                    ${item.theater}
+                    Theater ${item.theater}
 
                 </div>
 
 
-                ${
-                    item.movie
-                        ?
-                        `
-                        <div class="assignment-movie">
-
-                            ${escapeHTML(
-                                item.movie
-                            )}
-
-                        </div>
-                        `
-                        :
-                        ""
-                }
-
-
-                ${rowHTML}
+                ${rowsHTML}
 
             `;
 
@@ -3430,12 +3004,14 @@ function showDetectedLineup(
     output +=
         "GRID DETECTION SUCCESSFUL\n";
 
+
     output +=
         "====================================\n\n";
 
 
     output +=
-        "Showing column edges:\n";
+        "Column edges:\n";
+
 
     output +=
         columns
@@ -3453,7 +3029,7 @@ function showDetectedLineup(
 
 
     output +=
-        `Horizontal grid lines: ${rows.length}\n`;
+        `Horizontal lines: ${rows.length}\n`;
 
 
     output +=
@@ -3462,6 +3038,7 @@ function showDetectedLineup(
 
     output +=
         "DETECTED LINEUP\n";
+
 
     output +=
         "====================================\n\n";
@@ -3503,23 +3080,11 @@ function showDetectedLineup(
 
 
                 output +=
-                    "  " +
-                    showing.start +
-                    " - " +
-                    showing.end +
-                    "\n";
+                    `  ${showing.start} - ${showing.end}\n`;
 
 
-                if (
-                    showing.movie
-                ) {
-
-                    output +=
-                        "  " +
-                        showing.movie +
-                        "\n";
-
-                }
+                output +=
+                    `  OCR time: "${showing.raw.time}"\n`;
 
 
                 if (
@@ -3537,26 +3102,18 @@ function showDetectedLineup(
                     server => {
 
                         if (
-                            server
-                                .conditional
+                            server.conditional
                         ) {
 
                             output +=
-                                "  -> (" +
-                                server.name +
-                                ") : " +
-                                server.rows +
-                                " ONLY OVER 50\n";
+                                `  -> (${server.name}) : ${server.rows} ONLY OVER 50\n`;
 
                         }
 
                         else {
 
                             output +=
-                                "  -> " +
-                                server.name +
-                                " : " +
-                                server.rows;
+                                `  -> ${server.name} : ${server.rows}`;
 
 
                             if (
@@ -3566,9 +3123,7 @@ function showDetectedLineup(
                             ) {
 
                                 output +=
-                                    " -> " +
-                                    server.over50 +
-                                    " over 50";
+                                    ` -> ${server.over50} over 50`;
 
                             }
 
@@ -3601,9 +3156,7 @@ function showDetectedLineup(
    ESCAPE HTML
 ========================================================= */
 
-function escapeHTML(
-    value
-) {
+function escapeHTML(value) {
 
     return String(
         value
@@ -3612,22 +3165,18 @@ function escapeHTML(
             /&/g,
             "&amp;"
         )
-
         .replace(
             /</g,
             "&lt;"
         )
-
         .replace(
             />/g,
             "&gt;"
         )
-
         .replace(
             /"/g,
             "&quot;"
         )
-
         .replace(
             /'/g,
             "&#039;"
