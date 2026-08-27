@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.7
+VERSION 13.8
 ============================================================
 
 Keeps:
@@ -2762,6 +2762,56 @@ function cleanServerName(
     }
 
 
+    /*
+    Another common blank-cell hallucination is a plausible-looking
+    word dominated by one letter, such as "Freese". For strings of
+    6+ letters, reject cases where half or more of the characters
+    are the same letter.
+    */
+    if (
+        lettersOnly.length >= 6
+    ) {
+
+        const counts =
+            new Map();
+
+
+        for (
+            const character of
+            lettersOnly.toLowerCase()
+        ) {
+
+            counts.set(
+                character,
+                (
+                    counts.get(
+                        character
+                    ) || 0
+                ) + 1
+            );
+
+        }
+
+
+        const highestCount =
+            Math.max(
+                ...counts.values()
+            );
+
+
+        if (
+            highestCount /
+            lettersOnly.length >=
+            0.50
+        ) {
+
+            return "";
+
+        }
+
+    }
+
+
     if (
         !/[aeiouy]/i.test(
             lettersOnly
@@ -3794,8 +3844,26 @@ function populateServers() {
                         Infinity;
 
 
-                    strongKeys.forEach(
+                    /*
+                    Compare short damaged reads against every other detected
+                    name, not only names seen 2+ times. This catches cases such
+                    as "Enk" -> "Erik" even when Erik itself appears only once
+                    elsewhere in the lineup.
+                    */
+                    [
+                        ...displayByKey.keys()
+                    ].forEach(
                         key => {
+
+                            if (
+                                key ===
+                                originalKey
+                            ) {
+
+                                return;
+
+                            }
+
 
                             const distance =
                                 nameEditDistance(
@@ -3805,15 +3873,36 @@ function populateServers() {
 
 
                             const allowed =
-                                Math.min(
-                                    originalKey.length,
-                                    key.length
-                                ) <= 4
+                                originalKey.length <= 4
                                     ? 2
-                                    : 2;
+                                    : 1;
+
+
+                            const candidateFrequency =
+                                frequency.get(
+                                    key
+                                ) || 0;
+
+
+                            const originalFrequency =
+                                frequency.get(
+                                    originalKey
+                                ) || 0;
+
+
+                            const candidateIsBetter =
+                                candidateFrequency >
+                                originalFrequency ||
+
+                                (
+                                    originalKey.length <= 4 &&
+                                    key.length >
+                                    originalKey.length
+                                );
 
 
                             if (
+                                candidateIsBetter &&
                                 distance <= allowed &&
                                 distance < bestDistance
                             ) {
@@ -3934,7 +4023,7 @@ function populateServers() {
     browser is executing this exact script version.
     */
     detectedText.textContent +=
-        "\nSCRIPT VERSION: 13.7\n";
+        "\nSCRIPT VERSION: 13.8\n";
 
 }
 
