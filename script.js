@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.1
+VERSION 13.2
 ============================================================
 
 Keeps:
@@ -12,16 +12,11 @@ Keeps:
 ✓ 1 server = ALL ROWS
 ✓ 2 servers = split rows
 ✓ 3rd row = conditional over 50
+✓ OCR name cleanup and duplicate merging
 
 Improves:
-✓ Removes standalone OCR junk like "L Kishan"
-✓ Removes suffix junk like "Kishan L"
-✓ Merges attached-character OCR errors:
-    Lkishan -> Kishan
-    KishanL -> Kishan
-✓ Does NOT damage legitimate names like Luca
-✓ Removes duplicate server entries
-✓ Makes movie timeframe bold in personal schedule
+✓ Bold movie timeframe
+✓ Hides Detected Text after personal schedule is shown
 ============================================================
 */
 
@@ -687,7 +682,7 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // VERSION 13 NAME CLEANUP
+            // NAME CLEANUP
             // ---------------------------------------------
 
             canonicalizeServerNames();
@@ -2247,14 +2242,6 @@ function cleanServerName(
             .filter(Boolean);
 
 
-    /*
-    Remove standalone single-letter OCR fragments.
-
-    L Kishan -> Kishan
-    Kishan L -> Kishan
-    L L -> blank
-    */
-
     if (
         tokens.length >
         1
@@ -2369,17 +2356,10 @@ function cleanServerName(
 
 
 // =========================================================
-// VERSION 13 NAME CANONICALIZATION
+// NAME CANONICALIZATION
 // =========================================================
 
 function canonicalizeServerNames() {
-
-    /*
-    ========================================================
-    STEP 1
-    Clean all names.
-    ========================================================
-    */
 
     lineupData.forEach(showing => {
 
@@ -2403,13 +2383,6 @@ function canonicalizeServerNames() {
 
     });
 
-
-    /*
-    ========================================================
-    STEP 2
-    Count every normalized spelling.
-    ========================================================
-    */
 
     const frequency =
         new Map();
@@ -2469,25 +2442,6 @@ function canonicalizeServerNames() {
             ...displayNames.keys()
         ];
 
-
-    /*
-    ========================================================
-    STEP 3
-    Build alias map.
-
-    If a detected name is exactly one character longer
-    than another detected name, AND removing the first
-    or last character produces the shorter name, merge it.
-
-    Examples:
-
-    lkishan -> kishan
-    kishanl -> kishan
-
-    Luca will NOT become Uca because "uca" is not
-    another detected name.
-    ========================================================
-    */
 
     const aliases =
         new Map();
@@ -2552,11 +2506,6 @@ function canonicalizeServerNames() {
             shorterMatches.length
         ) {
 
-            /*
-            Prefer the shorter spelling that appears
-            most often in the schedule.
-            */
-
             shorterMatches.sort(
                 (
                     a,
@@ -2592,19 +2541,6 @@ function canonicalizeServerNames() {
 
     });
 
-
-    /*
-    ========================================================
-    STEP 4
-    Resolve chained errors.
-
-    Example:
-
-    llkishan
-      -> lkishan
-      -> kishan
-    ========================================================
-    */
 
     function resolveAlias(
         key
@@ -2649,13 +2585,6 @@ function canonicalizeServerNames() {
     }
 
 
-    /*
-    ========================================================
-    STEP 5
-    Apply canonical spelling.
-    ========================================================
-    */
-
     lineupData.forEach(showing => {
 
         showing.servers.forEach(server => {
@@ -2689,13 +2618,6 @@ function canonicalizeServerNames() {
 
     });
 
-
-    /*
-    ========================================================
-    STEP 6
-    Remove duplicate server names inside one showing.
-    ========================================================
-    */
 
     lineupData.forEach(showing => {
 
@@ -2787,10 +2709,6 @@ function applyAssignmentRules(
         );
 
 
-    /*
-    ONE NORMAL SERVER
-    */
-
     if (
         normalServers.length ===
         1
@@ -2832,10 +2750,6 @@ function applyAssignmentRules(
     }
 
 
-    /*
-    TWO NORMAL SERVERS
-    */
-
     else if (
         normalServers.length >=
         2
@@ -2870,10 +2784,6 @@ function applyAssignmentRules(
 
     }
 
-
-    /*
-    THIRD CONDITIONAL SERVER
-    */
 
     conditionalServers.forEach(
         server => {
@@ -3153,6 +3063,13 @@ document
             buildSchedule(
                 name
             );
+
+
+            // Hide debug/detected text once the server
+            // has opened their personal schedule.
+            debugSection
+                .classList
+                .add("hidden");
 
         }
     );
