@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.2
+VERSION 13.3
 ============================================================
 
 Keeps:
@@ -13,10 +13,12 @@ Keeps:
 ✓ 2 servers = split rows
 ✓ 3rd row = conditional over 50
 ✓ OCR name cleanup and duplicate merging
+✓ Bold movie timeframe
+✓ Compact schedule support
 
 Improves:
-✓ Bold movie timeframe
-✓ Hides Detected Text after personal schedule is shown
+✓ Detected Text fully hides after personal schedule opens
+✓ Detected Text resets properly for a new uploaded lineup
 ============================================================
 */
 
@@ -185,6 +187,11 @@ imageInput.addEventListener(
             .add("hidden");
 
 
+        // Reset debug display so it can be shown again
+        // when a new lineup is processed.
+        debugSection.style.display =
+            "";
+
         debugSection
             .classList
             .add("hidden");
@@ -241,6 +248,11 @@ readButton.addEventListener(
             .classList
             .add("hidden");
 
+
+        // Make sure Detected Text can appear during OCR,
+        // even if it was force-hidden previously.
+        debugSection.style.display =
+            "";
 
         debugSection
             .classList
@@ -3060,16 +3072,19 @@ document
             }
 
 
-            buildSchedule(
-                name
-            );
-
-
-            // Hide debug/detected text once the server
-            // has opened their personal schedule.
+            // Completely hide Detected Text before
+            // displaying the personal schedule.
             debugSection
                 .classList
                 .add("hidden");
+
+            debugSection.style.display =
+                "none";
+
+
+            buildSchedule(
+                name
+            );
 
         }
     );
