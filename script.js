@@ -1,25 +1,19 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 7 — PER-CELL OCR
+VERSION 8 — PER-CELL OCR + TIME DEBUGGING
 ============================================================
 
-The grid is detected first.
-
-Then instead of OCRing the entire spreadsheet at once,
-each individual TIME and SERVER cell is OCR'd separately.
-
-This makes Tesseract's job much easier.
-
-Movie titles are intentionally ignored for now because
-they aren't needed for the server's personal schedule.
-
-Rules:
-- 1 normal server = ALL ROWS
-- 2 normal servers = split using theater row assignments
-- 3rd row server = conditional, only over 50
-- Over 50 changes first/second server row groups
-- Final personal schedule sorted chronologically
+This version:
+✓ Detects 5 showing columns automatically
+✓ Detects all theater row lines automatically
+✓ OCRs each time/server cell individually
+✓ Logs EVERY raw time-cell OCR result
+✓ Handles 1-server = ALL ROWS
+✓ Handles 2-server row splits
+✓ Handles conditional 3rd server
+✓ Handles over-50 row changes
+✓ Sorts final schedule chronologically
 ============================================================
 */
 
@@ -160,11 +154,7 @@ imageInput.addEventListener(
 
         imagePreview.onload =
             () => {
-
-                URL.revokeObjectURL(
-                    url
-                );
-
+                URL.revokeObjectURL(url);
             };
 
 
@@ -220,7 +210,6 @@ readButton.addEventListener(
         readButton.disabled =
             true;
 
-
         readButton.textContent =
             "Detecting Spreadsheet...";
 
@@ -255,10 +244,6 @@ readButton.addEventListener(
 
         try {
 
-            /* -----------------------------------------
-               LOAD IMAGE
-            ----------------------------------------- */
-
             const image =
                 await loadImage(
                     uploadedFile
@@ -269,19 +254,11 @@ readButton.addEventListener(
                 `Image: ${image.width} × ${image.height}\n`;
 
 
-            /* -----------------------------------------
-               CREATE PIXEL ANALYSIS
-            ----------------------------------------- */
-
             const analysis =
                 createAnalysisCanvas(
                     image
                 );
 
-
-            /* -----------------------------------------
-               DETECT SHOWING COLUMNS
-            ----------------------------------------- */
 
             const columns =
                 detectShowingColumns(
@@ -300,13 +277,8 @@ readButton.addEventListener(
                 throw new Error(
                     `Expected 6 showing-column edges but detected ${columns.length}.`
                 );
-
             }
 
-
-            /* -----------------------------------------
-               DETECT HORIZONTAL GRID
-            ----------------------------------------- */
 
             const rows =
                 detectTheaterGrid(
@@ -327,7 +299,6 @@ readButton.addEventListener(
                 throw new Error(
                     `Expected 41 horizontal grid lines but detected ${rows.length}.`
                 );
-
             }
 
 
@@ -335,12 +306,8 @@ readButton.addEventListener(
                 "\nGrid detected successfully.\n";
 
             detectedText.textContent +=
-                "Reading individual cells...\n";
+                "Reading individual cells...\n\n";
 
-
-            /* -----------------------------------------
-               CREATE ONE TESSERACT WORKER
-            ----------------------------------------- */
 
             const worker =
                 await Tesseract.createWorker(
@@ -348,11 +315,6 @@ readButton.addEventListener(
                     1
                 );
 
-
-            /*
-            Every cell we're reading contains only
-            one line of text.
-            */
 
             if (
                 Tesseract.PSM &&
@@ -365,13 +327,8 @@ readButton.addEventListener(
                         Tesseract.PSM.SINGLE_LINE
 
                 });
-
             }
 
-
-            /* -----------------------------------------
-               READ THE GRID
-            ----------------------------------------- */
 
             lineupData =
                 await readGridCells(
@@ -385,18 +342,10 @@ readButton.addEventListener(
             await worker.terminate();
 
 
-            /* -----------------------------------------
-               APPLY BUSINESS RULES
-            ----------------------------------------- */
-
             lineupData.forEach(
                 applyAssignmentRules
             );
 
-
-            /* -----------------------------------------
-               DISPLAY RESULTS
-            ----------------------------------------- */
 
             showDetectedLineup(
                 columns,
@@ -414,7 +363,6 @@ readButton.addEventListener(
                 alert(
                     "The spreadsheet grid was detected, but no showtimes could be read."
                 );
-
             }
 
             else {
@@ -428,7 +376,6 @@ readButton.addEventListener(
                     .scrollIntoView({
                         behavior: "smooth"
                     });
-
             }
 
         }
@@ -453,7 +400,6 @@ readButton.addEventListener(
             alert(
                 "There was a problem reading the lineup. Scroll down to Detected Text."
             );
-
         }
 
 
@@ -502,7 +448,6 @@ function loadImage(file) {
                     resolve(
                         image
                     );
-
                 };
 
 
@@ -518,16 +463,13 @@ function loadImage(file) {
                             "Could not load uploaded image."
                         )
                     );
-
                 };
 
 
             image.src =
                 url;
-
         }
     );
-
 }
 
 
@@ -589,9 +531,7 @@ function createAnalysisCanvas(image) {
 
         height:
             canvas.height
-
     };
-
 }
 
 
@@ -640,7 +580,6 @@ function brightnessAt(
         analysis.data[index + 2]
 
     ) / 3;
-
 }
 
 
@@ -707,9 +646,7 @@ function detectShowingColumns(
             ) {
 
                 dark++;
-
             }
-
         }
 
 
@@ -722,9 +659,7 @@ function detectShowingColumns(
             candidates.push(
                 x
             );
-
         }
-
     }
 
 
@@ -752,12 +687,11 @@ function detectShowingColumns(
     return findBestColumnSet(
         lines
     );
-
 }
 
 
 /* =========================================================
-   FIND THE FIVE SHOWING COLUMNS
+   FIND BEST COLUMN SET
 ========================================================= */
 
 function findBestColumnSet(lines) {
@@ -768,7 +702,6 @@ function findBestColumnSet(lines) {
     ) {
 
         return [];
-
     }
 
 
@@ -808,7 +741,6 @@ function findBestColumnSet(lines) {
                 set[i + 1] -
                 set[i]
             );
-
         }
 
 
@@ -826,7 +758,6 @@ function findBestColumnSet(lines) {
         ) {
 
             continue;
-
         }
 
 
@@ -868,9 +799,7 @@ function findBestColumnSet(lines) {
 
             best =
                 set;
-
         }
-
     }
 
 
@@ -881,12 +810,10 @@ function findBestColumnSet(lines) {
     ) {
 
         return [];
-
     }
 
 
     return best;
-
 }
 
 
@@ -953,9 +880,7 @@ function detectTheaterGrid(
             ) {
 
                 dark++;
-
             }
-
         }
 
 
@@ -968,9 +893,7 @@ function detectTheaterGrid(
             candidates.push(
                 y
             );
-
         }
-
     }
 
 
@@ -998,12 +921,11 @@ function detectTheaterGrid(
     return findBestTheaterGrid(
         lines
     );
-
 }
 
 
 /* =========================================================
-   FIND REPEATING 41-LINE GRID
+   FIND BEST THEATER GRID
 ========================================================= */
 
 function findBestTheaterGrid(lines) {
@@ -1014,7 +936,6 @@ function findBestTheaterGrid(lines) {
     ) {
 
         return [];
-
     }
 
 
@@ -1067,14 +988,12 @@ function findBestTheaterGrid(lines) {
                     false;
 
                 break;
-
             }
 
 
             gaps.push(
                 gap
             );
-
         }
 
 
@@ -1104,7 +1023,6 @@ function findBestTheaterGrid(lines) {
                     movieGaps.push(
                         gap
                     );
-
                 }
 
                 else {
@@ -1112,7 +1030,6 @@ function findBestTheaterGrid(lines) {
                     smallerGaps.push(
                         gap
                     );
-
                 }
 
             }
@@ -1136,7 +1053,6 @@ function findBestTheaterGrid(lines) {
         ) {
 
             continue;
-
         }
 
 
@@ -1147,7 +1063,6 @@ function findBestTheaterGrid(lines) {
         ) {
 
             continue;
-
         }
 
 
@@ -1164,7 +1079,6 @@ function findBestTheaterGrid(lines) {
                         movieMedian
                     ) /
                     movieMedian;
-
             }
         );
 
@@ -1178,7 +1092,6 @@ function findBestTheaterGrid(lines) {
                         smallMedian
                     ) /
                     smallMedian;
-
             }
         );
 
@@ -1193,9 +1106,7 @@ function findBestTheaterGrid(lines) {
 
             best =
                 set;
-
         }
-
     }
 
 
@@ -1203,12 +1114,11 @@ function findBestTheaterGrid(lines) {
         best ||
         []
     );
-
 }
 
 
 /* =========================================================
-   CLUSTER LINE PIXELS
+   CLUSTER GRID POSITIONS
 ========================================================= */
 
 function clusterPositions(
@@ -1221,7 +1131,6 @@ function clusterPositions(
     ) {
 
         return [];
-
     }
 
 
@@ -1258,7 +1167,6 @@ function clusterPositions(
             current.push(
                 sorted[i]
             );
-
         }
 
         else {
@@ -1272,9 +1180,7 @@ function clusterPositions(
                 [
                     sorted[i]
                 ];
-
         }
-
     }
 
 
@@ -1293,7 +1199,6 @@ function clusterPositions(
             ) /
             cluster.length
     );
-
 }
 
 
@@ -1308,7 +1213,6 @@ function median(values) {
     ) {
 
         return 0;
-
     }
 
 
@@ -1335,7 +1239,6 @@ function median(values) {
         return sorted[
             middle
         ];
-
     }
 
 
@@ -1350,17 +1253,11 @@ function median(values) {
         ]
 
     ) / 2;
-
 }
 
 
 /* =========================================================
    READ ALL GRID CELLS
-
-   This is the important Version 7 change.
-
-   Tesseract receives tiny individual cells instead of
-   the entire spreadsheet.
 ========================================================= */
 
 async function readGridCells(
@@ -1373,10 +1270,6 @@ async function readGridCells(
     const showings =
         [];
 
-
-    /*
-    40 possible showtime cells.
-    */
 
     let processedCells =
         0;
@@ -1397,17 +1290,6 @@ async function readGridCells(
                 theater - 1
             ) * 5;
 
-
-        /*
-        Grid structure:
-
-        base     -> movie top
-        base + 1 -> movie/time divider
-        base + 2 -> time/server1 divider
-        base + 3 -> server1/server2 divider
-        base + 4 -> server2/server3 divider
-        base + 5 -> theater bottom
-        */
 
         const timeTop =
             rows[
@@ -1491,12 +1373,6 @@ async function readGridCells(
                 ];
 
 
-            /*
-            -----------------------------------------
-            READ TIME CELL FIRST
-            -----------------------------------------
-            */
-
             const rawTime =
                 await ocrSingleCell(
                     worker,
@@ -1508,32 +1384,35 @@ async function readGridCells(
                 );
 
 
+            /*
+            IMPORTANT DEBUG OUTPUT
+            */
+
+            console.log(
+                `T${theater} C${column + 1} raw time:`,
+                JSON.stringify(
+                    rawTime
+                )
+            );
+
+
+            detectedText.textContent +=
+                `T${theater} C${column + 1}: "${rawTime || "(blank)"}"\n`;
+
+
             const parsedTime =
                 parseShowtime(
                     rawTime
                 );
 
 
-            /*
-            No valid time = this is an empty showing slot.
-
-            We don't waste time OCRing the server rows.
-            */
-
             if (
                 !parsedTime
             ) {
 
                 continue;
-
             }
 
-
-            /*
-            -----------------------------------------
-            READ SERVER ROW 1
-            -----------------------------------------
-            */
 
             const rawServer1 =
                 await ocrSingleCell(
@@ -1546,12 +1425,6 @@ async function readGridCells(
                 );
 
 
-            /*
-            -----------------------------------------
-            READ SERVER ROW 2
-            -----------------------------------------
-            */
-
             const rawServer2 =
                 await ocrSingleCell(
                     worker,
@@ -1562,12 +1435,6 @@ async function readGridCells(
                     server2Bottom
                 );
 
-
-            /*
-            -----------------------------------------
-            READ CONDITIONAL SERVER ROW
-            -----------------------------------------
-            */
 
             const rawServer3 =
                 await ocrSingleCell(
@@ -1622,9 +1489,7 @@ async function readGridCells(
 
                     over50:
                         ""
-
                 });
-
             }
 
 
@@ -1648,9 +1513,7 @@ async function readGridCells(
 
                     over50:
                         ""
-
                 });
-
             }
 
 
@@ -1674,9 +1537,7 @@ async function readGridCells(
 
                     over50:
                         ""
-
                 });
-
             }
 
 
@@ -1703,10 +1564,6 @@ async function readGridCells(
                         theater
                     ],
 
-                /*
-                Useful while calibrating OCR.
-                */
-
                 raw: {
 
                     time:
@@ -1720,26 +1577,19 @@ async function readGridCells(
 
                     server3:
                         rawServer3
-
                 }
 
             });
-
         }
-
     }
 
 
     return showings;
-
 }
 
 
 /* =========================================================
    OCR ONE CELL
-
-   Crops out the spreadsheet borders and enlarges the
-   actual cell text before sending it to Tesseract.
 ========================================================= */
 
 async function ocrSingleCell(
@@ -1760,13 +1610,6 @@ async function ocrSingleCell(
         bottom -
         top;
 
-
-    /*
-    Remove borders.
-
-    Important because the black spreadsheet lines were
-    confusing Tesseract.
-    */
 
     const insetX =
         Math.max(
@@ -1812,11 +1655,6 @@ async function ocrSingleCell(
         );
 
 
-    /*
-    Tiny spreadsheet text benefits greatly from
-    enlargement.
-    */
-
     const scale =
         4;
 
@@ -1857,10 +1695,6 @@ async function ocrSingleCell(
         );
 
 
-    /*
-    White background.
-    */
-
     ctx.fillStyle =
         "white";
 
@@ -1890,14 +1724,8 @@ async function ocrSingleCell(
         0,
         canvas.width,
         canvas.height
-
     );
 
-
-    /*
-    Convert cell to high-contrast grayscale without
-    retaining the spreadsheet border.
-    */
 
     const imageData =
         ctx.getImageData(
@@ -1930,10 +1758,6 @@ async function ocrSingleCell(
             pixels[i + 2];
 
 
-        /*
-        Slightly gentler threshold than Version 6.
-        */
-
         const value =
             gray <
             205
@@ -1949,7 +1773,6 @@ async function ocrSingleCell(
 
         pixels[i + 2] =
             value;
-
     }
 
 
@@ -1979,7 +1802,6 @@ async function ocrSingleCell(
             " "
         )
         .trim();
-
 }
 
 
@@ -2005,17 +1827,6 @@ function applyAssignmentRules(
         );
 
 
-    /*
-    ---------------------------------------------------------
-    ONE SERVER
-    ---------------------------------------------------------
-
-    Regardless of whether their name was physically in
-    the first or second spreadsheet assignment row:
-
-    They get the entire theater.
-    */
-
     if (
         normalServers.length === 1
     ) {
@@ -2034,7 +1845,6 @@ function applyAssignmentRules(
 
             server.over50 =
                 "ALL ROWS";
-
         }
 
         else {
@@ -2056,17 +1866,9 @@ function applyAssignmentRules(
                     first,
                     second
                 );
-
         }
-
     }
 
-
-    /*
-    ---------------------------------------------------------
-    TWO SERVERS
-    ---------------------------------------------------------
-    */
 
     else if (
         normalServers.length >= 2
@@ -2074,11 +1876,6 @@ function applyAssignmentRules(
 
         normalServers.forEach(
             server => {
-
-                /*
-                Server position corresponds to spreadsheet
-                row 1 or row 2.
-                */
 
                 const ruleIndex =
                     Math.min(
@@ -2100,18 +1897,10 @@ function applyAssignmentRules(
 
                 server.over50 =
                     rule.over50;
-
             }
         );
-
     }
 
-
-    /*
-    ---------------------------------------------------------
-    CONDITIONAL THIRD SERVER
-    ---------------------------------------------------------
-    */
 
     conditionalServers.forEach(
         server => {
@@ -2127,10 +1916,8 @@ function applyAssignmentRules(
 
             server.over50 =
                 server.rows;
-
         }
     );
-
 }
 
 
@@ -2164,7 +1951,6 @@ function combineRows(
     ]
         .sort()
         .join("");
-
 }
 
 
@@ -2196,10 +1982,6 @@ function cleanServerName(value) {
             .trim();
 
 
-    /*
-    Empty / garbage
-    */
-
     if (
         cleaned.length <
         2 ||
@@ -2208,13 +1990,8 @@ function cleanServerName(value) {
     ) {
 
         return "";
-
     }
 
-
-    /*
-    Row codes aren't names.
-    */
 
     if (
         /^[A-H]{1,8}$/i.test(
@@ -2223,13 +2000,8 @@ function cleanServerName(value) {
     ) {
 
         return "";
-
     }
 
-
-    /*
-    Names on this sheet are short.
-    */
 
     if (
         cleaned
@@ -2239,7 +2011,6 @@ function cleanServerName(value) {
     ) {
 
         return "";
-
     }
 
 
@@ -2257,7 +2028,6 @@ function cleanServerName(value) {
                     .toLowerCase()
         )
         .join(" ");
-
 }
 
 
@@ -2289,12 +2059,6 @@ function parseShowtime(value) {
             );
 
 
-    /*
-    OCR corrections.
-
-    O / o between digits -> 0
-    */
-
     text =
         text.replace(
             /(?<=\d)[oO](?=\d)/g,
@@ -2302,20 +2066,12 @@ function parseShowtime(value) {
         );
 
 
-    /*
-    OCR sometimes reads I/l as 1.
-    */
-
     text =
         text.replace(
             /(?<=\d)[lI](?=\d)/g,
             "1"
         );
 
-
-    /*
-    Remove junk outside characters useful in a time.
-    */
 
     text =
         text.replace(
@@ -2359,10 +2115,6 @@ function parseShowtime(value) {
         );
 
 
-    /*
-    Reject impossible OCR.
-    */
-
     if (
 
         startHour <
@@ -2386,7 +2138,6 @@ function parseShowtime(value) {
     ) {
 
         return null;
-
     }
 
 
@@ -2402,18 +2153,7 @@ function parseShowtime(value) {
         );
 
 
-    /*
-    ---------------------------------------------------------
-    INFER START PERIOD
-    ---------------------------------------------------------
-    */
-
     if (!startPeriod) {
-
-        /*
-        Star Cinema first shows beginning at 10 or 11
-        are AM.
-        */
 
         if (
             startHour === 10 ||
@@ -2422,54 +2162,29 @@ function parseShowtime(value) {
 
             startPeriod =
                 "AM";
-
         }
 
         else {
 
             startPeriod =
                 "PM";
-
         }
-
     }
 
 
-    /*
-    ---------------------------------------------------------
-    INFER END PERIOD
-    ---------------------------------------------------------
-    */
-
     if (!endPeriod) {
-
-        /*
-        Morning movie beginning 10/11 and ending 12-6
-        ends in the afternoon.
-
-        Example:
-
-        11:00a - 1:00
-        */
 
         if (
             startPeriod === "AM" &&
             (
                 endHour === 12 ||
-                endHour <
-                startHour
+                endHour < startHour
             )
         ) {
 
             endPeriod =
                 "PM";
-
         }
-
-
-        /*
-        Late PM showing ending 12/1/2 crosses midnight.
-        */
 
         else if (
             startPeriod === "PM" &&
@@ -2482,17 +2197,13 @@ function parseShowtime(value) {
 
             endPeriod =
                 "AM";
-
         }
-
 
         else {
 
             endPeriod =
                 startPeriod;
-
         }
-
     }
 
 
@@ -2512,10 +2223,6 @@ function parseShowtime(value) {
         );
 
 
-    /*
-    End after midnight.
-    */
-
     if (
         endMinutes <
         startMinutes
@@ -2524,7 +2231,6 @@ function parseShowtime(value) {
         endMinutes +=
             24 *
             60;
-
     }
 
 
@@ -2547,9 +2253,7 @@ function parseShowtime(value) {
         startMinutes,
 
         endMinutes
-
     };
-
 }
 
 
@@ -2575,7 +2279,6 @@ function periodFromMarker(marker) {
     ) {
 
         return "AM";
-
     }
 
 
@@ -2586,12 +2289,10 @@ function periodFromMarker(marker) {
     ) {
 
         return "PM";
-
     }
 
 
     return "";
-
 }
 
 
@@ -2612,7 +2313,6 @@ function clockMinutes(
 
         adjusted +=
             12;
-
     }
 
 
@@ -2623,7 +2323,6 @@ function clockMinutes(
 
         adjusted =
             0;
-
     }
 
 
@@ -2632,7 +2331,6 @@ function clockMinutes(
         60 +
         minute
     );
-
 }
 
 
@@ -2654,7 +2352,6 @@ function formatTime(
         " " +
         period
     );
-
 }
 
 
@@ -2681,12 +2378,9 @@ function populateServers() {
                         names.add(
                             server.name
                         );
-
                     }
-
                 }
             );
-
         }
     );
 
@@ -2728,10 +2422,8 @@ function populateServers() {
                 serverSelect.appendChild(
                     option
                 );
-
             }
         );
-
 }
 
 
@@ -2758,14 +2450,12 @@ document
                 );
 
                 return;
-
             }
 
 
             buildSchedule(
                 name
             );
-
         }
     );
 
@@ -2796,14 +2486,10 @@ function buildSchedule(name) {
                             ...showing,
 
                             server
-
                         });
-
                     }
-
                 }
             );
-
         }
     );
 
@@ -2847,7 +2533,6 @@ function buildSchedule(name) {
 
 
         return;
-
     }
 
 
@@ -2894,7 +2579,6 @@ function buildSchedule(name) {
                     </div>
 
                 `;
-
             }
 
             else {
@@ -2931,9 +2615,7 @@ function buildSchedule(name) {
                         </div>
 
                     `;
-
                 }
-
             }
 
 
@@ -2969,7 +2651,6 @@ function buildSchedule(name) {
             scheduleList.appendChild(
                 card
             );
-
         }
     );
 
@@ -2984,7 +2665,6 @@ function buildSchedule(name) {
             behavior:
                 "smooth"
         });
-
 }
 
 
@@ -3068,7 +2748,6 @@ function showDetectedLineup(
 
             output +=
                 "  No showings detected\n";
-
         }
 
 
@@ -3094,7 +2773,6 @@ function showDetectedLineup(
 
                     output +=
                         "  ! No servers detected\n";
-
                 }
 
 
@@ -3107,7 +2785,6 @@ function showDetectedLineup(
 
                             output +=
                                 `  -> (${server.name}) : ${server.rows} ONLY OVER 50\n`;
-
                         }
 
                         else {
@@ -3124,13 +2801,11 @@ function showDetectedLineup(
 
                                 output +=
                                     ` -> ${server.over50} over 50`;
-
                             }
 
 
                             output +=
                                 "\n";
-
                         }
 
                     }
@@ -3142,13 +2817,11 @@ function showDetectedLineup(
 
         output +=
             "\n------------------------------------\n\n";
-
     }
 
 
     detectedText.textContent =
         output;
-
 }
 
 
@@ -3181,5 +2854,4 @@ function escapeHTML(value) {
             /'/g,
             "&#039;"
         );
-
 }
