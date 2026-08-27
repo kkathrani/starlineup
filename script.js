@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.6
+VERSION 13.7
 ============================================================
 
 Keeps:
@@ -619,7 +619,7 @@ readButton.addEventListener(
                         ];
 
 
-                    const raw =
+                    const nameOCR =
                         await ocrCell(
                             worker,
                             image,
@@ -631,10 +631,39 @@ readButton.addEventListener(
                         );
 
 
-                    const name =
+                    const raw =
+                        nameOCR.text ||
+                        "";
+
+
+                    const confidence =
+                        Number(
+                            nameOCR.confidence ||
+                            0
+                        );
+
+
+                    let name =
                         cleanServerName(
                             raw
                         );
+
+
+                    /*
+                    Blank spreadsheet cells can occasionally produce
+                    plausible-looking fake names. Their OCR confidence
+                    is usually much lower than real printed names.
+                    */
+                    if (
+                        name &&
+                        confidence <
+                        52
+                    ) {
+
+                        name =
+                            "";
+
+                    }
 
 
                     if (raw) {
@@ -647,10 +676,26 @@ readButton.addEventListener(
                             `"${raw}"`;
 
 
+                        detectedText.textContent +=
+                            ` [${Math.round(confidence)}%]`;
+
+
                         if (name) {
 
                             detectedText.textContent +=
                                 ` -> ${name}`;
+
+                        }
+
+
+                        else if (
+                            raw &&
+                            confidence <
+                            52
+                        ) {
+
+                            detectedText.textContent +=
+                                " -> rejected low confidence";
 
                         }
 
@@ -2194,23 +2239,48 @@ async function ocrCell(
         );
 
 
-    return (
-        result.data?.text ||
-        ""
-    )
-        .replace(
-            /\r/g,
+    const cleanedText =
+        (
+            result.data?.text ||
             ""
         )
-        .replace(
-            /\n/g,
-            " "
-        )
-        .replace(
-            /\s+/g,
-            " "
-        )
-        .trim();
+            .replace(
+                /\r/g,
+                ""
+            )
+            .replace(
+                /\n/g,
+                " "
+            )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim();
+
+
+    if (
+        type ===
+        "name"
+    ) {
+
+        return {
+
+            text:
+                cleanedText,
+
+            confidence:
+                Number(
+                    result.data?.confidence ||
+                    0
+                )
+
+        };
+
+    }
+
+
+    return cleanedText;
 
 }
 
@@ -3059,7 +3129,7 @@ function canonicalizeServerNames() {
                                     key.length,
                                     other.length
                                 ) <= 4
-                                    ? 1
+                                    ? 2
                                     : 2;
 
 
@@ -3739,7 +3809,7 @@ function populateServers() {
                                     originalKey.length,
                                     key.length
                                 ) <= 4
-                                    ? 1
+                                    ? 2
                                     : 2;
 
 
@@ -3864,7 +3934,7 @@ function populateServers() {
     browser is executing this exact script version.
     */
     detectedText.textContent +=
-        "\nSCRIPT VERSION: 13.6\n";
+        "\nSCRIPT VERSION: 13.7\n";
 
 }
 
