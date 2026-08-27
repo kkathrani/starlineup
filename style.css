@@ -1,0 +1,211 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: #0b0b0d;
+    color: white;
+    font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Roboto,
+        Arial,
+        sans-serif;
+}
+
+.container {
+    max-width: 700px;
+    margin: auto;
+    padding: 24px 16px 80px;
+}
+
+header {
+    text-align: center;
+    margin: 20px 0 35px;
+}
+
+header h1 {
+    margin: 0;
+    font-size: 34px;
+}
+
+.subtitle {
+    margin-top: 5px;
+    color: #999;
+}
+
+.card {
+    background: #18181b;
+    border: 1px solid #2b2b30;
+    border-radius: 18px;
+    padding: 22px;
+    margin-bottom: 20px;
+}
+
+.card h2 {
+    margin-top: 0;
+}
+
+.upload-box {
+    display: block;
+    border: 2px dashed #555;
+    border-radius: 15px;
+    text-align: center;
+    padding: 30px 15px;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+.upload-box:hover {
+    border-color: white;
+}
+
+.upload-box input {
+    display: none;
+}
+
+.upload-box span {
+    font-size: 17px;
+    font-weight: 600;
+}
+
+#previewContainer {
+    margin-top: 20px;
+}
+
+#imagePreview {
+    width: 100%;
+    border-radius: 12px;
+}
+
+.primary-button {
+    width: 100%;
+    margin-top: 18px;
+    padding: 15px;
+    border: none;
+    border-radius: 12px;
+
+    background: white;
+    color: black;
+
+    font-size: 16px;
+    font-weight: 700;
+
+    cursor: pointer;
+}
+
+select {
+    width: 100%;
+    padding: 15px;
+    border-radius: 12px;
+
+    background: #252529;
+    color: white;
+
+    border: 1px solid #444;
+
+    font-size: 16px;
+}
+
+.hidden {
+    display: none;
+}
+
+.progress {
+    width: 100%;
+    background: #333;
+    height: 8px;
+    border-radius: 5px;
+    overflow: hidden;
+    margin-top: 15px;
+}
+
+#progressBar {
+    height: 100%;
+    width: 0%;
+    background: white;
+}
+
+.schedule-header {
+    margin: 30px 5px 15px;
+}
+
+.schedule-header h2 {
+    margin-bottom: 3px;
+}
+
+.schedule-header p {
+    margin: 0;
+    color: #999;
+}
+
+.assignment {
+    background: #18181b;
+    border: 1px solid #2b2b30;
+    border-radius: 18px;
+    padding: 20px;
+    margin-bottom: 14px;
+}
+
+.assignment-time {
+    font-size: 14px;
+    color: #999;
+    font-weight: 600;
+}
+
+.assignment-title {
+    font-size: 22px;
+    font-weight: 750;
+    margin-top: 5px;
+}
+
+.assignment-movie {
+    color: #aaa;
+    margin-top: 2px;
+}
+
+.rows {
+    display: inline-block;
+
+    margin-top: 15px;
+    padding: 7px 12px;
+
+    background: #303036;
+
+    border-radius: 9px;
+
+    font-size: 17px;
+    font-weight: 750;
+
+    letter-spacing: 1px;
+}
+
+.over50 {
+    margin-top: 10px;
+    color: #bbb;
+    font-size: 14px;
+}
+
+.conditional {
+    border-left: 4px solid #aaa;
+}
+
+.conditional-label {
+    display: inline-block;
+
+    background: #303036;
+    padding: 5px 8px;
+
+    border-radius: 6px;
+
+    font-size: 12px;
+    margin-top: 10px;
+}
+
+pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #aaa;
+}
