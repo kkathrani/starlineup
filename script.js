@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.9
+VERSION 13.10
 ============================================================
 
 Keeps:
@@ -1019,70 +1019,138 @@ function detectShowingColumns(
     analysis
 ) {
 
-    const candidates =
-        [];
-
-
     /*
-    The old detector only counted extremely dark pixels.
-    Some exported schedules use gray anti-aliased grid lines,
-    so those vertical lines disappeared from detection.
+    VERSION 13.10 ADAPTIVE COLUMN DETECTION
 
-    We scan the middle portion of the image where the theater
-    table normally lives and allow medium-gray grid pixels.
+    Previous versions used one fixed darkness/support threshold.
+    That works for some screenshots but fails when the same lineup
+    is exported at a different scale, contrast, or crop.
+
+    This detector tries several vertical ranges and brightness
+    thresholds, then derives its support threshold from the image
+    itself. It therefore looks for the strongest long vertical grid
+    lines rather than assuming a particular screenshot style.
     */
 
-    const yStart =
-        Math.floor(
-            analysis.height *
-            0.10
-        );
+    const passes = [
+        { top: 0.08, bottom: 0.96, brightness: 215 },
+        { top: 0.14, bottom: 0.94, brightness: 205 },
+        { top: 0.20, bottom: 0.92, brightness: 195 },
+        { top: 0.28, bottom: 0.90, brightness: 185 },
+        { top: 0.10, bottom: 0.98, brightness: 230 }
+    ];
 
 
-    const yEnd =
-        Math.ceil(
-            analysis.height *
-            0.90
-        );
-
-
-    const samples =
-        Math.max(
-            1,
-            Math.floor(
-                (
-                    yEnd -
-                    yStart
-                ) / 2
-            )
-        );
+    let best =
+        null;
 
 
     for (
-        let x = 0;
-        x < analysis.width;
-        x++
+        const pass of
+        passes
     ) {
 
-        let dark =
+        const yStart =
+            Math.max(
+                0,
+                Math.floor(
+                    analysis.height *
+                    pass.top
+                )
+            );
+
+
+        const yEnd =
+            Math.min(
+                analysis.height,
+                Math.ceil(
+                    analysis.height *
+                    pass.bottom
+                )
+            );
+
+
+        const stepY =
+            Math.max(
+                1,
+                Math.round(
+                    analysis.height /
+                    900
+                )
+            );
+
+
+        const sampledRows =
+            Math.max(
+                1,
+                Math.ceil(
+                    (
+                        yEnd -
+                        yStart
+                    ) /
+                    stepY
+                )
+            );
+
+
+        const ratios =
+            new Array(
+                analysis.width
+            ).fill(0);
+
+
+        let maximumRatio =
             0;
 
 
         for (
-            let y = yStart;
-            y < yEnd;
-            y += 2
+            let x = 0;
+            x < analysis.width;
+            x++
         ) {
 
-            if (
-                brightnessAt(
-                    analysis,
-                    x,
-                    y
-                ) < 185
+            let dark =
+                0;
+
+
+            for (
+                let y = yStart;
+                y < yEnd;
+                y += stepY
             ) {
 
-                dark++;
+                if (
+                    brightnessAt(
+                        analysis,
+                        x,
+                        y
+                    ) <
+                    pass.brightness
+                ) {
+
+                    dark++;
+
+                }
+
+            }
+
+
+            const ratio =
+                dark /
+                sampledRows;
+
+
+            ratios[x] =
+                ratio;
+
+
+            if (
+                ratio >
+                maximumRatio
+            ) {
+
+                maximumRatio =
+                    ratio;
 
             }
 
@@ -1090,50 +1158,213 @@ function detectShowingColumns(
 
 
         if (
-            dark /
-            samples >
-            0.52
+            maximumRatio <
+            0.08
         ) {
 
-            candidates.push(
-                x
+            continue;
+
+        }
+
+
+        /*
+        Use a threshold relative to the strongest vertical line in
+        this particular image. Clamp it so faint-but-real grid lines
+        can still be found without admitting ordinary text columns.
+        */
+        const supportThreshold =
+            Math.max(
+                0.10,
+                Math.min(
+                    0.46,
+                    maximumRatio *
+                    0.50
+                )
             );
+
+
+        const candidates =
+            [];
+
+
+        for (
+            let x = 0;
+            x < analysis.width;
+            x++
+        ) {
+
+            if (
+                ratios[x] >=
+                supportThreshold
+            ) {
+
+                candidates.push(
+                    x
+                );
+
+            }
+
+        }
+
+
+        let lines =
+            clusterPositions(
+                candidates,
+                Math.max(
+                    3,
+                    Math.round(
+                        analysis.width *
+                        0.004
+                    )
+                )
+            );
+
+
+        lines =
+            lines.filter(
+                x =>
+                    x >
+                    analysis.width *
+                    0.025 &&
+                    x <
+                    analysis.width *
+                    0.995
+            );
+
+
+        const set =
+            findBestColumnSet(
+                lines,
+                analysis.width
+            );
+
+
+        if (
+            set.length !==
+            6
+        ) {
+
+            continue;
+
+        }
+
+
+        const gaps =
+            [];
+
+
+        for (
+            let i = 0;
+            i < 5;
+            i++
+        ) {
+
+            gaps.push(
+                set[i + 1] -
+                set[i]
+            );
+
+        }
+
+
+        const averageGap =
+            gaps.reduce(
+                (
+                    a,
+                    b
+                ) =>
+                    a + b,
+                0
+            ) /
+            gaps.length;
+
+
+        const variance =
+            gaps.reduce(
+                (
+                    sum,
+                    gap
+                ) => {
+
+                    const d =
+                        gap -
+                        averageGap;
+
+
+                    return (
+                        sum +
+                        d * d
+                    );
+
+                },
+                0
+            ) /
+            gaps.length;
+
+
+        const geometryScore =
+            averageGap
+                ? Math.sqrt(
+                    variance
+                ) /
+                    averageGap
+                : 999;
+
+
+        const supportScore =
+            set.reduce(
+                (
+                    sum,
+                    x
+                ) =>
+                    sum +
+                    ratios[
+                        Math.max(
+                            0,
+                            Math.min(
+                                analysis.width - 1,
+                                Math.round(x)
+                            )
+                        )
+                    ],
+                0
+            ) /
+            set.length;
+
+
+        const totalScore =
+            geometryScore -
+            supportScore *
+            0.20;
+
+
+        if (
+            !best ||
+            totalScore <
+            best.score
+        ) {
+
+            best = {
+                set,
+                score:
+                    totalScore
+            };
 
         }
 
     }
 
 
-    let lines =
-        clusterPositions(
-            candidates,
-            5
-        );
-
-
-    lines =
-        lines.filter(
-            x =>
-
-                x >
-                analysis.width *
-                0.04 &&
-
-                x <
-                analysis.width *
-                0.995
-        );
-
-
-    return findBestColumnSet(
-        lines
-    );
+    return best
+        ? best.set
+        : [];
 
 }
 
 
 function findBestColumnSet(
-    lines
+    lines,
+    imageWidth = null
 ) {
 
     if (
@@ -1150,19 +1381,14 @@ function findBestColumnSet(
         [];
 
 
-    for (
-        let start = 0;
-        start <=
-        lines.length - 6;
-        start++
+    /*
+    Usually there are only a handful of strong lines. Search every
+    ordered 6-line combination when practical so extra page borders
+    or the Theater-label boundary cannot throw the detector off.
+    */
+    function considerSet(
+        set
     ) {
-
-        const set =
-            lines.slice(
-                start,
-                start + 6
-            );
-
 
         const gaps =
             [];
@@ -1174,9 +1400,22 @@ function findBestColumnSet(
             i++
         ) {
 
-            gaps.push(
+            const gap =
                 set[i + 1] -
-                set[i]
+                set[i];
+
+
+            if (
+                gap <= 0
+            ) {
+
+                return;
+
+            }
+
+
+            gaps.push(
+                gap
             );
 
         }
@@ -1198,7 +1437,7 @@ function findBestColumnSet(
             average <= 0
         ) {
 
-            continue;
+            return;
 
         }
 
@@ -1226,37 +1465,141 @@ function findBestColumnSet(
             gaps.length;
 
 
-        const score =
+        const cv =
             Math.sqrt(
                 variance
             ) /
             average;
 
 
-        /*
-        Keep only sets that look like the five evenly spaced
-        showing columns. The first theater-label column is often
-        the same width, so when two sets are similarly good we
-        intentionally prefer the one farther to the right.
-        */
+        const span =
+            set[5] -
+            set[0];
+
 
         if (
-            score <=
-            0.18
+            cv >
+            0.24
         ) {
 
-            possible.push({
+            return;
 
-                set,
+        }
 
-                score,
 
-                right:
-                    set[
-                        set.length - 1
-                    ]
+        if (
+            imageWidth &&
+            (
+                span <
+                imageWidth *
+                0.38 ||
+                span >
+                imageWidth *
+                0.90
+            )
+        ) {
 
-            });
+            return;
+
+        }
+
+
+        possible.push({
+            set,
+            score:
+                cv,
+            right:
+                set[5],
+            span
+        });
+
+    }
+
+
+    if (
+        lines.length <=
+        12
+    ) {
+
+        for (
+            let a = 0;
+            a < lines.length - 5;
+            a++
+        ) {
+
+            for (
+                let b = a + 1;
+                b < lines.length - 4;
+                b++
+            ) {
+
+                for (
+                    let c = b + 1;
+                    c < lines.length - 3;
+                    c++
+                ) {
+
+                    for (
+                        let d = c + 1;
+                        d < lines.length - 2;
+                        d++
+                    ) {
+
+                        for (
+                            let e = d + 1;
+                            e < lines.length - 1;
+                            e++
+                        ) {
+
+                            for (
+                                let f = e + 1;
+                                f < lines.length;
+                                f++
+                            ) {
+
+                                considerSet([
+                                    lines[a],
+                                    lines[b],
+                                    lines[c],
+                                    lines[d],
+                                    lines[e],
+                                    lines[f]
+                                ]);
+
+                            }
+
+                        }
+
+                    }
+
+                }
+
+            }
+
+        }
+
+    }
+
+
+    else {
+
+        /*
+        Defensive fallback for unusually noisy images: test nearby
+        sequences instead of exploding combinatorially.
+        */
+        for (
+            let start = 0;
+            start <=
+            lines.length - 6;
+            start++
+        ) {
+
+            considerSet(
+                lines.slice(
+                    start,
+                    start + 6
+                )
+            );
 
         }
 
@@ -1283,17 +1626,11 @@ function findBestColumnSet(
                 b.score;
 
 
-            /*
-            If one candidate is clearly more evenly spaced,
-            use it. Otherwise prefer the rightmost candidate,
-            which excludes the theater-name column.
-            */
-
             if (
                 Math.abs(
                     scoreDifference
                 ) >
-                0.03
+                0.035
             ) {
 
                 return scoreDifference;
@@ -1301,6 +1638,11 @@ function findBestColumnSet(
             }
 
 
+            /*
+            When two sets are similarly regular, prefer the set
+            farther right. This excludes the left Theater-label
+            column and retains the five showing columns.
+            */
             return (
                 b.right -
                 a.right
@@ -4085,7 +4427,7 @@ function populateServers() {
 
 
     detectedText.textContent +=
-        "\nSCRIPT VERSION: 13.9\n";
+        "\nSCRIPT VERSION: 13.10\n";
 
 }
 
