@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.12
+VERSION 13.13
 ============================================================
 
 Keeps:
@@ -333,6 +333,19 @@ readButton.addEventListener(
                         value =>
                             Math.round(
                                 value
+                            )
+                    ).join(", ")}\n`;
+
+
+                detectedText.textContent +=
+                    `Column gaps: ${columns.slice(1).map(
+                        (
+                            value,
+                            index
+                        ) =>
+                            Math.round(
+                                value -
+                                columns[index]
                             )
                     ).join(", ")}\n`;
 
@@ -1106,66 +1119,1198 @@ function brightnessAt(
 // VERSION 13.11: COMPLETE GRID DETECTION
 // =========================================================
 
+// =========================================================
+// VERSION 13.13: VISUAL GRID DETECTION
+// =========================================================
+
+function medianBrightnessAcrossRowInterior(
+    analysis,
+    top,
+    bottom
+) {
+
+    const y =
+        Math.round(
+            (
+                top +
+                bottom
+            ) / 2
+        );
+
+
+    const values =
+        [];
+
+
+    const xStart =
+        Math.round(
+            analysis.width *
+            0.18
+        );
+
+
+    const xEnd =
+        Math.round(
+            analysis.width *
+            0.92
+        );
+
+
+    const step =
+        Math.max(
+            3,
+            Math.round(
+                analysis.width /
+                120
+            )
+        );
+
+
+    for (
+        let x = xStart;
+        x <= xEnd;
+        x += step
+    ) {
+
+        values.push(
+            brightnessAt(
+                analysis,
+                x,
+                y
+            )
+        );
+
+    }
+
+
+    return median(
+        values
+    );
+
+}
+
+
+function scoreTheaterRowSet(
+    analysis,
+    set
+) {
+
+    if (
+        !set ||
+        set.length !== 41
+    ) {
+
+        return Infinity;
+
+    }
+
+
+    const gaps =
+        [];
+
+
+    for (
+        let i = 0;
+        i < 40;
+        i++
+    ) {
+
+        const gap =
+            set[i + 1] -
+            set[i];
+
+
+        if (
+            gap <= 2
+        ) {
+
+            return Infinity;
+
+        }
+
+
+        gaps.push(
+            gap
+        );
+
+    }
+
+
+    const serverGaps =
+        [];
+
+
+    const movieGaps =
+        [];
+
+
+    const timeGaps =
+        [];
+
+
+    let shadeScore =
+        0;
+
+
+    for (
+        let theater = 0;
+        theater < 8;
+        theater++
+    ) {
+
+        const base =
+            theater *
+            5;
+
+
+        const movieGap =
+            gaps[
+                base
+            ];
+
+
+        const timeGap =
+            gaps[
+                base + 1
+            ];
+
+
+        const s1 =
+            gaps[
+                base + 2
+            ];
+
+
+        const s2 =
+            gaps[
+                base + 3
+            ];
+
+
+        const s3 =
+            gaps[
+                base + 4
+            ];
+
+
+        movieGaps.push(
+            movieGap
+        );
+
+
+        timeGaps.push(
+            timeGap
+        );
+
+
+        serverGaps.push(
+            s1,
+            s2,
+            s3
+        );
+
+
+        /*
+        On this schedule template, the movie/time area is gray while
+        the three server rows are generally white. Use that visual
+        pattern to make sure the 41-line sequence starts at Theater 1
+        rather than at an unrelated header row.
+        */
+
+        const movieBrightness =
+            medianBrightnessAcrossRowInterior(
+                analysis,
+                set[base],
+                set[base + 1]
+            );
+
+
+        const timeBrightness =
+            medianBrightnessAcrossRowInterior(
+                analysis,
+                set[base + 1],
+                set[base + 2]
+            );
+
+
+        const serverBrightness =
+            median(
+                [
+                    medianBrightnessAcrossRowInterior(
+                        analysis,
+                        set[base + 2],
+                        set[base + 3]
+                    ),
+
+                    medianBrightnessAcrossRowInterior(
+                        analysis,
+                        set[base + 3],
+                        set[base + 4]
+                    ),
+
+                    medianBrightnessAcrossRowInterior(
+                        analysis,
+                        set[base + 4],
+                        set[base + 5]
+                    )
+                ]
+            );
+
+
+        const grayAverage =
+            (
+                movieBrightness +
+                timeBrightness
+            ) /
+            2;
+
+
+        /*
+        Do not require gray rows absolutely; some screenshots are
+        washed out. Only penalize the opposite pattern strongly.
+        */
+        if (
+            grayAverage >
+            serverBrightness +
+            8
+        ) {
+
+            shadeScore +=
+                (
+                    grayAverage -
+                    serverBrightness
+                ) /
+                8;
+
+        }
+
+
+        /*
+        Reward the expected gray-vs-white contrast when it is visible.
+        */
+        if (
+            serverBrightness >
+            grayAverage
+        ) {
+
+            shadeScore -=
+                Math.min(
+                    1.5,
+                    (
+                        serverBrightness -
+                        grayAverage
+                    ) /
+                    25
+                );
+
+        }
+
+    }
+
+
+    const serverMedian =
+        median(
+            serverGaps
+        );
+
+
+    const movieMedian =
+        median(
+            movieGaps
+        );
+
+
+    const timeMedian =
+        median(
+            timeGaps
+        );
+
+
+    if (
+        !serverMedian ||
+        !movieMedian ||
+        !timeMedian
+    ) {
+
+        return Infinity;
+
+    }
+
+
+    let score =
+        shadeScore *
+        2.2;
+
+
+    /*
+    Server rows should be very similar in height throughout the table.
+    */
+    serverGaps.forEach(
+        gap => {
+
+            score +=
+                Math.abs(
+                    gap -
+                    serverMedian
+                ) /
+                serverMedian *
+                0.55;
+
+        }
+    );
+
+
+    /*
+    Movie and time row heights can vary between exports, so keep
+    these ranges deliberately broad while still rejecting obvious
+    phase shifts.
+    */
+    movieGaps.forEach(
+        gap => {
+
+            const ratio =
+                gap /
+                serverMedian;
+
+
+            if (
+                ratio <
+                0.70 ||
+                ratio >
+                2.40
+            ) {
+
+                score +=
+                    4;
+
+            }
+
+        }
+    );
+
+
+    timeGaps.forEach(
+        gap => {
+
+            const ratio =
+                gap /
+                serverMedian;
+
+
+            if (
+                ratio <
+                0.55 ||
+                ratio >
+                1.80
+            ) {
+
+                score +=
+                    4;
+
+            }
+
+        }
+    );
+
+
+    /*
+    Across all 8 theaters the movie and time bands should also be
+    reasonably consistent.
+    */
+    movieGaps.forEach(
+        gap => {
+
+            score +=
+                Math.abs(
+                    gap -
+                    movieMedian
+                ) /
+                movieMedian *
+                0.20;
+
+        }
+    );
+
+
+    timeGaps.forEach(
+        gap => {
+
+            score +=
+                Math.abs(
+                    gap -
+                    timeMedian
+                ) /
+                timeMedian *
+                0.20;
+
+        }
+    );
+
+
+    return score;
+
+}
+
+
+function findBestVisualTheaterGrid(
+    analysis,
+    lines
+) {
+
+    if (
+        lines.length <
+        41
+    ) {
+
+        return [];
+
+    }
+
+
+    let best =
+        null;
+
+
+    let bestScore =
+        Infinity;
+
+
+    for (
+        let start = 0;
+        start <=
+        lines.length - 41;
+        start++
+    ) {
+
+        const set =
+            lines.slice(
+                start,
+                start + 41
+            );
+
+
+        const score =
+            scoreTheaterRowSet(
+                analysis,
+                set
+            );
+
+
+        if (
+            score <
+            bestScore
+        ) {
+
+            bestScore =
+                score;
+
+
+            best =
+                set;
+
+        }
+
+    }
+
+
+    return (
+        best ||
+        []
+    );
+
+}
+
+
+function findSixShowingBoundaries(
+    analysis,
+    rows
+) {
+
+    if (
+        !rows ||
+        rows.length !== 41
+    ) {
+
+        return [];
+
+    }
+
+
+    const sampleYs =
+        [];
+
+
+    /*
+    Sample only row interiors. This measures vertical rule continuity
+    without horizontal rules contaminating every x position.
+    */
+    for (
+        let i = 0;
+        i < rows.length - 1;
+        i++
+    ) {
+
+        const top =
+            rows[i];
+
+
+        const bottom =
+            rows[i + 1];
+
+
+        const gap =
+            bottom -
+            top;
+
+
+        if (
+            gap <= 3
+        ) {
+
+            continue;
+
+        }
+
+
+        sampleYs.push(
+            top +
+                gap *
+                0.22,
+
+            top +
+                gap *
+                0.50,
+
+            top +
+                gap *
+                0.78
+        );
+
+    }
+
+
+    const scores =
+        new Array(
+            analysis.width
+        ).fill(0);
+
+
+    let maxScore =
+        0;
+
+
+    for (
+        let x = 0;
+        x < analysis.width;
+        x++
+    ) {
+
+        let score =
+            0;
+
+
+        for (
+            const rawY of
+            sampleYs
+        ) {
+
+            const y =
+                Math.round(
+                    rawY
+                );
+
+
+            const value =
+                Math.min(
+                    brightnessAt(
+                        analysis,
+                        x,
+                        y
+                    ),
+                    brightnessAt(
+                        analysis,
+                        x - 1,
+                        y
+                    ),
+                    brightnessAt(
+                        analysis,
+                        x + 1,
+                        y
+                    )
+                );
+
+
+            if (
+                value <
+                205
+            ) {
+
+                score +=
+                    1;
+
+            }
+
+
+            if (
+                value <
+                120
+            ) {
+
+                score +=
+                    0.45;
+
+            }
+
+        }
+
+
+        score /=
+            Math.max(
+                1,
+                sampleYs.length
+            );
+
+
+        scores[x] =
+            score;
+
+
+        if (
+            score >
+            maxScore
+        ) {
+
+            maxScore =
+                score;
+
+        }
+
+    }
+
+
+    /*
+    Turn the strongest vertical responses into peak positions.
+    Multiple thresholds make this tolerant of gray, thin, or
+    anti-aliased exported grid lines.
+    */
+
+    const allPeaks =
+        [];
+
+
+    const fractions = [
+        0.78,
+        0.68,
+        0.58,
+        0.48,
+        0.40,
+        0.32
+    ];
+
+
+    for (
+        const fraction of
+        fractions
+    ) {
+
+        const threshold =
+            Math.max(
+                0.08,
+                maxScore *
+                fraction
+            );
+
+
+        const raw =
+            [];
+
+
+        for (
+            let x = 0;
+            x < analysis.width;
+            x++
+        ) {
+
+            if (
+                scores[x] >=
+                threshold
+            ) {
+
+                raw.push(
+                    x
+                );
+
+            }
+
+        }
+
+
+        const centers =
+            clusterPositions(
+                raw,
+                Math.max(
+                    2,
+                    Math.round(
+                        analysis.width *
+                        0.003
+                    )
+                )
+            );
+
+
+        centers.forEach(
+            center => {
+
+                const radius =
+                    Math.max(
+                        2,
+                        Math.round(
+                            analysis.width *
+                            0.007
+                        )
+                    );
+
+
+                let bestX =
+                    Math.round(
+                        center
+                    );
+
+
+                let best =
+                    -1;
+
+
+                for (
+                    let x =
+                        Math.max(
+                            0,
+                            bestX -
+                            radius
+                        );
+                    x <=
+                    Math.min(
+                        analysis.width - 1,
+                        bestX +
+                        radius
+                    );
+                    x++
+                ) {
+
+                    if (
+                        scores[x] >
+                        best
+                    ) {
+
+                        best =
+                            scores[x];
+
+
+                        bestX =
+                            x;
+
+                    }
+
+                }
+
+
+                allPeaks.push(
+                    bestX
+                );
+
+            }
+        );
+
+    }
+
+
+    const peaks =
+        clusterPositions(
+            allPeaks,
+            Math.max(
+                3,
+                Math.round(
+                    analysis.width *
+                    0.006
+                )
+            )
+        )
+            .map(
+                value =>
+                    Math.round(
+                        value
+                    )
+            )
+            .filter(
+                x =>
+                    x >
+                    analysis.width *
+                    0.04 &&
+
+                    x <
+                    analysis.width *
+                    0.98
+            );
+
+
+    if (
+        peaks.length <
+        6
+    ) {
+
+        return [];
+
+    }
+
+
+    /*
+    The five showing columns are the most stable piece of geometry in
+    every schedule example: six boundaries with five nearly equal
+    gaps.
+
+    Search for that arithmetic progression directly. This avoids the
+    Version 13.12 mistake of treating an internal vertical rule as the
+    theater/showing divider.
+    */
+
+    let bestSet =
+        null;
+
+
+    let bestSetScore =
+        Infinity;
+
+
+    for (
+        let i = 0;
+        i < peaks.length - 5;
+        i++
+    ) {
+
+        for (
+            let j = i + 5;
+            j < peaks.length;
+            j++
+        ) {
+
+            const first =
+                peaks[i];
+
+
+            const last =
+                peaks[j];
+
+
+            const span =
+                last -
+                first;
+
+
+            if (
+                span <
+                analysis.width *
+                0.48 ||
+
+                span >
+                analysis.width *
+                0.90
+            ) {
+
+                continue;
+
+            }
+
+
+            const step =
+                span /
+                5;
+
+
+            if (
+                step <
+                analysis.width *
+                0.07 ||
+
+                step >
+                analysis.width *
+                0.22
+            ) {
+
+                continue;
+
+            }
+
+
+            const set =
+                [];
+
+
+            let totalError =
+                0;
+
+
+            let totalStrength =
+                0;
+
+
+            let failed =
+                false;
+
+
+            let previous =
+                -Infinity;
+
+
+            for (
+                let k = 0;
+                k < 6;
+                k++
+            ) {
+
+                const expected =
+                    first +
+                    step *
+                    k;
+
+
+                let nearest =
+                    null;
+
+
+                let nearestDistance =
+                    Infinity;
+
+
+                for (
+                    const peak of
+                    peaks
+                ) {
+
+                    if (
+                        peak <=
+                        previous
+                    ) {
+
+                        continue;
+
+                    }
+
+
+                    const distance =
+                        Math.abs(
+                            peak -
+                            expected
+                        );
+
+
+                    if (
+                        distance <
+                        nearestDistance
+                    ) {
+
+                        nearestDistance =
+                            distance;
+
+
+                        nearest =
+                            peak;
+
+                    }
+
+                }
+
+
+                if (
+                    nearest === null ||
+
+                    nearestDistance >
+                    Math.max(
+                        8,
+                        step *
+                        0.16
+                    )
+                ) {
+
+                    failed =
+                        true;
+
+                    break;
+
+                }
+
+
+                set.push(
+                    nearest
+                );
+
+
+                previous =
+                    nearest;
+
+
+                totalError +=
+                    nearestDistance /
+                    step;
+
+
+                totalStrength +=
+                    scores[
+                        Math.max(
+                            0,
+                            Math.min(
+                                analysis.width - 1,
+                                Math.round(
+                                    nearest
+                                )
+                            )
+                        )
+                    ];
+
+            }
+
+
+            if (failed) {
+                continue;
+            }
+
+
+            const gaps =
+                [];
+
+
+            for (
+                let k = 0;
+                k < 5;
+                k++
+            ) {
+
+                gaps.push(
+                    set[k + 1] -
+                    set[k]
+                );
+
+            }
+
+
+            const gapMedian =
+                median(
+                    gaps
+                );
+
+
+            const gapVariation =
+                gaps.reduce(
+                    (
+                        sum,
+                        gap
+                    ) =>
+                        sum +
+                        Math.abs(
+                            gap -
+                            gapMedian
+                        ) /
+                        gapMedian,
+                    0
+                ) /
+                gaps.length;
+
+
+            /*
+            Hard guard: a set like 143,76,73,152,146 must never be
+            accepted as five showing columns.
+            */
+            if (
+                gapVariation >
+                0.13
+            ) {
+
+                continue;
+
+            }
+
+
+            const averageStrength =
+                totalStrength /
+                6;
+
+
+            const score =
+                totalError *
+                2.2 +
+                gapVariation *
+                8 -
+                averageStrength *
+                0.70;
+
+
+            if (
+                score <
+                bestSetScore
+            ) {
+
+                bestSetScore =
+                    score;
+
+
+                bestSet =
+                    set;
+
+            }
+
+        }
+
+    }
+
+
+    return (
+        bestSet ||
+        []
+    );
+
+}
+
+
 function detectScheduleGrid(
     analysis
 ) {
 
     /*
-    VERSION 13.12
-
-    Step 1:
-    Detect the 41 horizontal lines that define the eight theater
-    blocks.
-
-    Step 2:
-    Once those rows are known, inspect ONLY the theater-table body
-    for vertical lines. This avoids assuming that the Theater label
-    column is the same width as the five showing columns.
-
-    Step 3:
-    Choose seven vertical boundaries:
-        left theater edge
-        theater/showing divider
-        five remaining showing boundaries
-
-    OCR then uses boundaries 1..6 as the five showing columns.
+    Build one rich pool of horizontal rule candidates using several
+    darkness/support combinations.
     */
 
-    const horizontalPasses = [
-        { brightness: 110, support: 0.36 },
-        { brightness: 135, support: 0.36 },
-        { brightness: 160, support: 0.36 },
-        { brightness: 185, support: 0.34 },
-        { brightness: 210, support: 0.32 },
-        { brightness: 230, support: 0.30 }
+    const passes = [
+        { brightness: 95,  support: 0.28 },
+        { brightness: 120, support: 0.28 },
+        { brightness: 145, support: 0.27 },
+        { brightness: 170, support: 0.26 },
+        { brightness: 195, support: 0.25 },
+        { brightness: 220, support: 0.23 },
+        { brightness: 235, support: 0.21 }
     ];
 
 
-    let bestRows =
+    const horizontalPositions =
         [];
 
 
-    let bestCandidateCount =
-        Infinity;
+    const stepX =
+        Math.max(
+            1,
+            Math.round(
+                analysis.width /
+                1400
+            )
+        );
 
 
     for (
         const pass of
-        horizontalPasses
+        passes
     ) {
 
-        const candidates =
+        const raw =
             [];
-
-
-        const stepX =
-            Math.max(
-                1,
-                Math.round(
-                    analysis.width /
-                    1200
-                )
-            );
 
 
         for (
@@ -1214,7 +2359,7 @@ function detectScheduleGrid(
                 pass.support
             ) {
 
-                candidates.push(
+                raw.push(
                     y
                 );
 
@@ -1223,45 +2368,61 @@ function detectScheduleGrid(
         }
 
 
-        const clustered =
-            clusterPositions(
-                candidates,
-                Math.max(
-                    3,
-                    Math.round(
-                        analysis.height *
-                        0.003
-                    )
+        clusterPositions(
+            raw,
+            Math.max(
+                2,
+                Math.round(
+                    analysis.height *
+                    0.0025
                 )
+            )
+        )
+            .forEach(
+                y =>
+                    horizontalPositions.push(
+                        y
+                    )
             );
-
-
-        const rows =
-            findBestTheaterGrid(
-                clustered
-            );
-
-
-        if (
-            rows.length === 41 &&
-            clustered.length <
-            bestCandidateCount
-        ) {
-
-            bestRows =
-                rows;
-
-
-            bestCandidateCount =
-                clustered.length;
-
-        }
 
     }
 
 
+    let horizontalLines =
+        clusterPositions(
+            horizontalPositions,
+            Math.max(
+                3,
+                Math.round(
+                    analysis.height *
+                    0.004
+                )
+            )
+        );
+
+
+    horizontalLines =
+        horizontalLines.filter(
+            y =>
+                y >
+                analysis.height *
+                0.025 &&
+
+                y <
+                analysis.height *
+                0.985
+        );
+
+
+    const rows =
+        findBestVisualTheaterGrid(
+            analysis,
+            horizontalLines
+        );
+
+
     if (
-        bestRows.length !== 41
+        rows.length !== 41
     ) {
 
         return {
@@ -1270,591 +2431,39 @@ function detectScheduleGrid(
             columns:
                 [],
             strategy:
-                "horizontal-first failed"
+                "visual horizontal grid failed"
         };
 
     }
 
 
-    const top =
-        Math.max(
-            0,
-            Math.round(
-                bestRows[0]
-            )
+    const columns =
+        findSixShowingBoundaries(
+            analysis,
+            rows
         );
-
-
-    const bottom =
-        Math.min(
-            analysis.height - 1,
-            Math.round(
-                bestRows[
-                    bestRows.length - 1
-                ]
-            )
-        );
-
-
-    /*
-    Score every x position by how often it behaves like a vertical
-    rule INSIDE row interiors. Sampling row interiors instead of
-    horizontal boundaries prevents every horizontal line from
-    looking like a vertical line.
-    */
-
-    const sampleYs =
-        [];
-
-
-    for (
-        let i = 0;
-        i < bestRows.length - 1;
-        i++
-    ) {
-
-        const a =
-            bestRows[i];
-
-
-        const b =
-            bestRows[i + 1];
-
-
-        const gap =
-            b - a;
-
-
-        if (
-            gap <= 2
-        ) {
-
-            continue;
-
-        }
-
-
-        /*
-        Three samples per row interior make the score tolerant of
-        text crossing a boundary at any one y position.
-        */
-        sampleYs.push(
-            a + gap * 0.25,
-            a + gap * 0.50,
-            a + gap * 0.75
-        );
-
-    }
-
-
-    const scores =
-        new Array(
-            analysis.width
-        ).fill(0);
-
-
-    let maximumScore =
-        0;
-
-
-    for (
-        let x = 0;
-        x < analysis.width;
-        x++
-    ) {
-
-        let dark =
-            0;
-
-
-        let veryDark =
-            0;
-
-
-        for (
-            const sampleY of
-            sampleYs
-        ) {
-
-            const y =
-                Math.max(
-                    top,
-                    Math.min(
-                        bottom,
-                        Math.round(
-                            sampleY
-                        )
-                    )
-                );
-
-
-            const value =
-                Math.min(
-                    brightnessAt(
-                        analysis,
-                        x,
-                        y
-                    ),
-                    brightnessAt(
-                        analysis,
-                        x,
-                        y - 1
-                    ),
-                    brightnessAt(
-                        analysis,
-                        x,
-                        y + 1
-                    )
-                );
-
-
-            if (
-                value <
-                190
-            ) {
-
-                dark++;
-
-            }
-
-
-            if (
-                value <
-                105
-            ) {
-
-                veryDark++;
-
-            }
-
-        }
-
-
-        const score =
-            (
-                dark +
-                veryDark *
-                0.35
-            ) /
-            Math.max(
-                1,
-                sampleYs.length
-            );
-
-
-        scores[x] =
-            score;
-
-
-        if (
-            score >
-            maximumScore
-        ) {
-
-            maximumScore =
-                score;
-
-        }
-
-    }
-
-
-    /*
-    Build candidate vertical rules at several relative thresholds.
-    We keep the best seven-line geometry found across all passes.
-    */
-
-    const thresholdFractions = [
-        0.72,
-        0.64,
-        0.56,
-        0.48,
-        0.40,
-        0.34
-    ];
-
-
-    let bestVerticalSet =
-        null;
-
-
-    let bestVerticalScore =
-        Infinity;
-
-
-    for (
-        const fraction of
-        thresholdFractions
-    ) {
-
-        const threshold =
-            Math.max(
-                0.10,
-                maximumScore *
-                fraction
-            );
-
-
-        const rawCandidates =
-            [];
-
-
-        for (
-            let x = 0;
-            x < analysis.width;
-            x++
-        ) {
-
-            if (
-                scores[x] >=
-                threshold
-            ) {
-
-                rawCandidates.push(
-                    x
-                );
-
-            }
-
-        }
-
-
-        const clustered =
-            clusterPositions(
-                rawCandidates,
-                Math.max(
-                    2,
-                    Math.round(
-                        analysis.width *
-                        0.0035
-                    )
-                )
-            );
-
-
-        /*
-        Refine each cluster to the actual peak-score x rather than
-        merely using the cluster average.
-        */
-        const candidates =
-            clustered.map(
-                center => {
-
-                    const radius =
-                        Math.max(
-                            2,
-                            Math.round(
-                                analysis.width *
-                                0.006
-                            )
-                        );
-
-
-                    const left =
-                        Math.max(
-                            0,
-                            Math.floor(
-                                center -
-                                radius
-                            )
-                        );
-
-
-                    const right =
-                        Math.min(
-                            analysis.width - 1,
-                            Math.ceil(
-                                center +
-                                radius
-                            )
-                        );
-
-
-                    let bestX =
-                        Math.round(
-                            center
-                        );
-
-
-                    let bestScore =
-                        -1;
-
-
-                    for (
-                        let x = left;
-                        x <= right;
-                        x++
-                    ) {
-
-                        if (
-                            scores[x] >
-                            bestScore
-                        ) {
-
-                            bestScore =
-                                scores[x];
-
-
-                            bestX =
-                                x;
-
-                        }
-
-                    }
-
-
-                    return bestX;
-
-                }
-            )
-            .filter(
-                (
-                    value,
-                    index,
-                    array
-                ) =>
-                    index === 0 ||
-                    Math.abs(
-                        value -
-                        array[index - 1]
-                    ) >
-                    2
-            );
-
-
-        if (
-            candidates.length <
-            7
-        ) {
-
-            continue;
-
-        }
-
-
-        /*
-        Evaluate every consecutive set of seven candidate rules.
-
-        We do NOT require the first gap (Theater label column) to
-        equal the five showing widths. Only the final five gaps need
-        to be close to uniform.
-        */
-
-        for (
-            let startIndex = 0;
-            startIndex <=
-            candidates.length - 7;
-            startIndex++
-        ) {
-
-            const set =
-                candidates.slice(
-                    startIndex,
-                    startIndex + 7
-                );
-
-
-            const gaps =
-                [];
-
-
-            for (
-                let i = 0;
-                i < 6;
-                i++
-            ) {
-
-                gaps.push(
-                    set[i + 1] -
-                    set[i]
-                );
-
-            }
-
-
-            if (
-                gaps.some(
-                    gap =>
-                        gap <=
-                        analysis.width *
-                        0.035
-                )
-            ) {
-
-                continue;
-
-            }
-
-
-            const showingGaps =
-                gaps.slice(
-                    1
-                );
-
-
-            const showingMedian =
-                median(
-                    showingGaps
-                );
-
-
-            if (
-                !showingMedian
-            ) {
-
-                continue;
-
-            }
-
-
-            const showingError =
-                showingGaps.reduce(
-                    (
-                        sum,
-                        gap
-                    ) =>
-                        sum +
-                        Math.abs(
-                            gap -
-                            showingMedian
-                        ) /
-                        showingMedian,
-                    0
-                ) /
-                showingGaps.length;
-
-
-            const labelRatio =
-                gaps[0] /
-                showingMedian;
-
-
-            /*
-            Star Cinema exports vary, but the theater-label column is
-            still in roughly the same scale as a showing column.
-            Keep this intentionally broad.
-            */
-            if (
-                labelRatio <
-                0.45 ||
-                labelRatio >
-                1.65
-            ) {
-
-                continue;
-
-            }
-
-
-            const totalWidth =
-                set[6] -
-                set[0];
-
-
-            if (
-                totalWidth <
-                analysis.width *
-                0.45 ||
-                totalWidth >
-                analysis.width *
-                0.95
-            ) {
-
-                continue;
-
-            }
-
-
-            const lineStrength =
-                set.reduce(
-                    (
-                        sum,
-                        x
-                    ) =>
-                        sum +
-                        scores[x],
-                    0
-                ) /
-                set.length;
-
-
-            const centeredness =
-                Math.abs(
-                    (
-                        set[0] +
-                        set[6]
-                    ) /
-                    2 -
-                    analysis.width /
-                    2
-                ) /
-                analysis.width;
-
-
-            const geometryScore =
-                showingError *
-                4 +
-                Math.abs(
-                    labelRatio -
-                    0.85
-                ) *
-                0.30 +
-                centeredness *
-                0.30 -
-                lineStrength *
-                0.65;
-
-
-            if (
-                geometryScore <
-                bestVerticalScore
-            ) {
-
-                bestVerticalScore =
-                    geometryScore;
-
-
-                bestVerticalSet =
-                    set;
-
-            }
-
-        }
-
-    }
 
 
     if (
-        !bestVerticalSet
+        columns.length !== 6
     ) {
 
         return {
-            rows:
-                bestRows,
+            rows,
             columns:
                 [],
             strategy:
-                "horizontal rows found; direct vertical rules failed"
+                "theater rows found; equal showing columns failed"
         };
 
     }
 
 
     return {
-        rows:
-            bestRows,
-
-        /*
-        Skip the Theater-label column's left edge. The remaining six
-        rules bound the five showing columns.
-        */
-        columns:
-            bestVerticalSet.slice(
-                1
-            ),
-
+        rows,
+        columns,
         strategy:
-            "horizontal-first + direct vertical rules"
+            "visual rows + equal showing columns"
     };
 
 }
@@ -5559,7 +6168,7 @@ function populateServers() {
 
 
     detectedText.textContent +=
-        "\nSCRIPT VERSION: 13.12\n";
+        "\nSCRIPT VERSION: 13.13\n";
 
 }
 
