@@ -128,65 +128,125 @@ select {
     background: white;
 }
 
+
+/* =========================================================
+   PERSONAL SCHEDULE
+   ========================================================= */
+
 .schedule-header {
-    margin: 30px 5px 15px;
+    margin: 22px 5px 10px;
 }
 
 .schedule-header h2 {
-    margin-bottom: 3px;
+    margin: 0;
+    font-size: 24px;
 }
 
 .schedule-header p {
-    margin: 0;
+    margin: 2px 0 0;
     color: #999;
+    font-size: 13px;
 }
+
+
+/* Less space between assignments */
+
+#scheduleList {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+
+/* Smaller schedule cards */
 
 .assignment {
     background: #18181b;
     border: 1px solid #2b2b30;
-    border-radius: 18px;
-    padding: 20px;
-    margin-bottom: 14px;
+    border-radius: 13px;
+
+    padding: 10px 13px;
+
+    margin: 0;
 }
+
+
+/* Important movie timeframe */
 
 .assignment-time {
-    font-size: 14px;
-    color: #999;
-    font-weight: 600;
+    font-size: 15px;
+    color: white;
+
+    font-weight: 800;
+
+    line-height: 1.1;
+
+    margin: 0 0 3px;
 }
 
-.assignment-title {
-    font-size: 22px;
-    font-weight: 750;
-    margin-top: 5px;
+.assignment-time strong {
+    font-weight: 800;
 }
+
+
+/* Theater number */
+
+.assignment-title {
+    font-size: 18px;
+    font-weight: 750;
+
+    line-height: 1.1;
+
+    margin: 0;
+}
+
+
+/* Kept in case movie names are added later */
 
 .assignment-movie {
     color: #aaa;
+    font-size: 12px;
+
     margin-top: 2px;
 }
+
+
+/* Assigned rows */
 
 .rows {
     display: inline-block;
 
-    margin-top: 15px;
-    padding: 7px 12px;
+    margin-top: 7px;
+
+    padding: 4px 9px;
 
     background: #303036;
 
-    border-radius: 9px;
+    border-radius: 7px;
 
-    font-size: 17px;
+    font-size: 14px;
     font-weight: 750;
 
     letter-spacing: 1px;
+
+    line-height: 1.1;
 }
 
+
+/* Alternate rows when guest count exceeds 50 */
+
 .over50 {
-    margin-top: 10px;
+    margin-top: 5px;
+
     color: #bbb;
-    font-size: 14px;
+
+    font-size: 11px;
+
+    line-height: 1.2;
 }
+
+
+/* Conditional third-server assignment */
 
 .conditional {
     border-left: 4px solid #aaa;
@@ -196,16 +256,137 @@ select {
     display: inline-block;
 
     background: #303036;
-    padding: 5px 8px;
 
-    border-radius: 6px;
+    padding: 3px 6px;
 
-    font-size: 12px;
-    margin-top: 10px;
+    border-radius: 5px;
+
+    font-size: 9px;
+    font-weight: 700;
+
+    margin-top: 6px;
+
+    line-height: 1.1;
 }
+
 
 pre {
     white-space: pre-wrap;
     word-break: break-word;
     color: #aaa;
+}
+
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 600px) {
+
+    .container {
+        padding:
+            16px
+            12px
+            45px;
+    }
+
+
+    header {
+        margin:
+            12px
+            0
+            22px;
+    }
+
+
+    header h1 {
+        font-size: 29px;
+    }
+
+
+    .card {
+        padding: 17px;
+        border-radius: 15px;
+        margin-bottom: 15px;
+    }
+
+
+    .schedule-header {
+        margin:
+            16px
+            3px
+            8px;
+    }
+
+
+    .schedule-header h2 {
+        font-size: 21px;
+    }
+
+
+    .schedule-header p {
+        font-size: 11px;
+    }
+
+
+    #scheduleList {
+        gap: 5px;
+    }
+
+
+    .assignment {
+        padding:
+            8px
+            10px;
+
+        border-radius: 10px;
+    }
+
+
+    .assignment-time {
+        font-size: 14px;
+
+        line-height: 1.05;
+
+        margin-bottom: 2px;
+    }
+
+
+    .assignment-title {
+        font-size: 16px;
+
+        line-height: 1.05;
+    }
+
+
+    .rows {
+        margin-top: 5px;
+
+        padding:
+            3px
+            7px;
+
+        border-radius: 6px;
+
+        font-size: 12px;
+    }
+
+
+    .over50 {
+        margin-top: 3px;
+
+        font-size: 10px;
+    }
+
+
+    .conditional-label {
+        margin-top: 4px;
+
+        padding:
+            2px
+            5px;
+
+        font-size: 8px;
+    }
+
 }
