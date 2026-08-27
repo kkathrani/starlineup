@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.10
+VERSION 13.11
 ============================================================
 
 Keeps:
@@ -285,17 +285,93 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // DETECT COLUMNS
+            // DETECT COMPLETE SCHEDULE GRID
             // ---------------------------------------------
 
-            const columns =
-                detectShowingColumns(
+            /*
+            Version 13.11 no longer starts by asking for six long
+            vertical lines. Some Star Cinema exports interrupt those
+            lines enough that a vertical-first detector can find zero.
+
+            Horizontal theater-row lines are much more consistent across
+            schedule exports, so detect the 41 theater grid lines first,
+            infer the table width, then refine the seven vertical table
+            boundaries from their expected positions.
+            */
+            const geometry =
+                detectScheduleGrid(
                     analysis
                 );
 
 
+            let columns =
+                geometry.columns;
+
+
+            let rows =
+                geometry.rows;
+
+
+            detectedText.textContent +=
+                `Grid strategy: ${geometry.strategy}\n`;
+
+
             detectedText.textContent +=
                 `Showing column edges: ${columns.length}\n`;
+
+
+            detectedText.textContent +=
+                `Horizontal grid lines: ${rows.length}\n`;
+
+
+            /*
+            Keep the older detector as a fallback. This gives us two
+            independent ways to understand the same schedule instead of
+            making one screenshot style a single point of failure.
+            */
+            if (
+                columns.length !== 6 ||
+                rows.length !== 41
+            ) {
+
+                const fallbackColumns =
+                    detectShowingColumns(
+                        analysis
+                    );
+
+
+                if (
+                    fallbackColumns.length === 6
+                ) {
+
+                    const fallbackRows =
+                        detectTheaterGrid(
+                            analysis,
+                            fallbackColumns[0],
+                            fallbackColumns[5]
+                        );
+
+
+                    if (
+                        fallbackRows.length === 41
+                    ) {
+
+                        columns =
+                            fallbackColumns;
+
+
+                        rows =
+                            fallbackRows;
+
+
+                        detectedText.textContent +=
+                            "Fallback grid detector succeeded.\n";
+
+                    }
+
+                }
+
+            }
 
 
             if (
@@ -307,22 +383,6 @@ readButton.addEventListener(
                 );
 
             }
-
-
-            // ---------------------------------------------
-            // DETECT ROWS
-            // ---------------------------------------------
-
-            const rows =
-                detectTheaterGrid(
-                    analysis,
-                    columns[0],
-                    columns[5]
-                );
-
-
-            detectedText.textContent +=
-                `Horizontal grid lines: ${rows.length}\n`;
 
 
             if (
@@ -1007,6 +1067,656 @@ function brightnessAt(
         analysis.data[i + 2]
 
     ) / 3;
+
+}
+
+
+// =========================================================
+// VERSION 13.11: COMPLETE GRID DETECTION
+// =========================================================
+
+function detectScheduleGrid(
+    analysis
+) {
+
+    const horizontalPasses = [
+        { brightness: 120, support: 0.42 },
+        { brightness: 150, support: 0.42 },
+        { brightness: 180, support: 0.42 },
+        { brightness: 205, support: 0.40 },
+        { brightness: 225, support: 0.38 }
+    ];
+
+
+    let bestRows =
+        [];
+
+
+    let bestCandidateCount =
+        Infinity;
+
+
+    for (
+        const pass of
+        horizontalPasses
+    ) {
+
+        const candidates =
+            [];
+
+
+        for (
+            let y = 0;
+            y < analysis.height;
+            y++
+        ) {
+
+            let dark =
+                0;
+
+
+            const stepX =
+                Math.max(
+                    1,
+                    Math.round(
+                        analysis.width /
+                        1200
+                    )
+                );
+
+
+            let samples =
+                0;
+
+
+            for (
+                let x = 0;
+                x < analysis.width;
+                x += stepX
+            ) {
+
+                samples++;
+
+
+                if (
+                    brightnessAt(
+                        analysis,
+                        x,
+                        y
+                    ) <
+                    pass.brightness
+                ) {
+
+                    dark++;
+
+                }
+
+            }
+
+
+            if (
+                samples &&
+                dark /
+                samples >=
+                pass.support
+            ) {
+
+                candidates.push(
+                    y
+                );
+
+            }
+
+        }
+
+
+        const clustered =
+            clusterPositions(
+                candidates,
+                Math.max(
+                    3,
+                    Math.round(
+                        analysis.height *
+                        0.003
+                    )
+                )
+            );
+
+
+        const rows =
+            findBestTheaterGrid(
+                clustered
+            );
+
+
+        if (
+            rows.length === 41 &&
+            clustered.length <
+            bestCandidateCount
+        ) {
+
+            bestRows =
+                rows;
+
+
+            bestCandidateCount =
+                clustered.length;
+
+        }
+
+    }
+
+
+    if (
+        bestRows.length !== 41
+    ) {
+
+        return {
+            rows:
+                [],
+            columns:
+                [],
+            strategy:
+                "horizontal-first failed"
+        };
+
+    }
+
+
+    /*
+    Every selected row is a true horizontal table line. Its first and
+    last dark pixels give a very stable estimate of the table width.
+    Taking the median makes the estimate insensitive to text or a few
+    unusually long header/footer lines.
+    */
+    const leftBounds =
+        [];
+
+
+    const rightBounds =
+        [];
+
+
+    const boundThresholds =
+        [
+            120,
+            160,
+            195
+        ];
+
+
+    for (
+        const rowY of
+        bestRows
+    ) {
+
+        const y =
+            Math.max(
+                0,
+                Math.min(
+                    analysis.height - 1,
+                    Math.round(
+                        rowY
+                    )
+                )
+            );
+
+
+        let rowLeft =
+            null;
+
+
+        let rowRight =
+            null;
+
+
+        for (
+            const threshold of
+            boundThresholds
+        ) {
+
+            const darkXs =
+                [];
+
+
+            for (
+                let x = 0;
+                x < analysis.width;
+                x++
+            ) {
+
+                if (
+                    brightnessAt(
+                        analysis,
+                        x,
+                        y
+                    ) <
+                    threshold
+                ) {
+
+                    darkXs.push(
+                        x
+                    );
+
+                }
+
+            }
+
+
+            if (
+                darkXs.length >=
+                analysis.width *
+                0.35
+            ) {
+
+                rowLeft =
+                    darkXs[0];
+
+
+                rowRight =
+                    darkXs[
+                        darkXs.length - 1
+                    ];
+
+
+                break;
+
+            }
+
+        }
+
+
+        if (
+            rowLeft !== null &&
+            rowRight !== null &&
+            rowRight -
+            rowLeft >=
+            analysis.width *
+            0.45
+        ) {
+
+            leftBounds.push(
+                rowLeft
+            );
+
+
+            rightBounds.push(
+                rowRight
+            );
+
+        }
+
+    }
+
+
+    if (
+        leftBounds.length < 10 ||
+        rightBounds.length < 10
+    ) {
+
+        return {
+            rows:
+                bestRows,
+            columns:
+                [],
+            strategy:
+                "horizontal rows found; table width failed"
+        };
+
+    }
+
+
+    const tableLeft =
+        median(
+            leftBounds
+        );
+
+
+    const tableRight =
+        median(
+            rightBounds
+        );
+
+
+    const tableWidth =
+        tableRight -
+        tableLeft;
+
+
+    if (
+        tableWidth <=
+        analysis.width *
+        0.40
+    ) {
+
+        return {
+            rows:
+                bestRows,
+            columns:
+                [],
+            strategy:
+                "horizontal rows found; table too narrow"
+        };
+
+    }
+
+
+    /*
+    The lineup template is one Theater-label column plus five showing
+    columns. Estimate seven boundaries by dividing the detected table
+    width into six columns, then snap every estimate to the strongest
+    nearby vertical grid line. This survives broken/merged vertical
+    lines because we only search locally around where that boundary is
+    geometrically expected to be.
+    */
+    const estimatedColumnWidth =
+        tableWidth /
+        6;
+
+
+    const rowMidpoints =
+        [];
+
+
+    for (
+        let i = 0;
+        i < bestRows.length - 1;
+        i++
+    ) {
+
+        rowMidpoints.push(
+            (
+                bestRows[i] +
+                bestRows[i + 1]
+            ) /
+            2
+        );
+
+    }
+
+
+    const boundaries =
+        [];
+
+
+    for (
+        let boundaryIndex = 0;
+        boundaryIndex <= 6;
+        boundaryIndex++
+    ) {
+
+        const expected =
+            tableLeft +
+            estimatedColumnWidth *
+            boundaryIndex;
+
+
+        const radius =
+            Math.max(
+                5,
+                estimatedColumnWidth *
+                0.22
+            );
+
+
+        const searchLeft =
+            Math.max(
+                0,
+                Math.floor(
+                    expected -
+                    radius
+                )
+            );
+
+
+        const searchRight =
+            Math.min(
+                analysis.width - 1,
+                Math.ceil(
+                    expected +
+                    radius
+                )
+            );
+
+
+        let bestX =
+            Math.round(
+                expected
+            );
+
+
+        let bestScore =
+            -Infinity;
+
+
+        for (
+            let x = searchLeft;
+            x <= searchRight;
+            x++
+        ) {
+
+            let darkHits =
+                0;
+
+
+            let veryDarkHits =
+                0;
+
+
+            for (
+                const midpoint of
+                rowMidpoints
+            ) {
+
+                const y =
+                    Math.max(
+                        0,
+                        Math.min(
+                            analysis.height - 1,
+                            Math.round(
+                                midpoint
+                            )
+                        )
+                    );
+
+
+                const brightness =
+                    Math.min(
+                        brightnessAt(
+                            analysis,
+                            x,
+                            y
+                        ),
+                        brightnessAt(
+                            analysis,
+                            x,
+                            y - 1
+                        ),
+                        brightnessAt(
+                            analysis,
+                            x,
+                            y + 1
+                        )
+                    );
+
+
+                if (
+                    brightness < 195
+                ) {
+
+                    darkHits++;
+
+                }
+
+
+                if (
+                    brightness < 110
+                ) {
+
+                    veryDarkHits++;
+
+                }
+
+            }
+
+
+            const distancePenalty =
+                Math.abs(
+                    x -
+                    expected
+                ) /
+                Math.max(
+                    1,
+                    radius
+                ) *
+                0.08;
+
+
+            const score =
+                darkHits /
+                Math.max(
+                    1,
+                    rowMidpoints.length
+                ) +
+                veryDarkHits /
+                Math.max(
+                    1,
+                    rowMidpoints.length
+                ) *
+                0.25 -
+                distancePenalty;
+
+
+            if (
+                score >
+                bestScore
+            ) {
+
+                bestScore =
+                    score;
+
+
+                bestX =
+                    x;
+
+            }
+
+        }
+
+
+        boundaries.push(
+            bestX
+        );
+
+    }
+
+
+    const boundaryGaps =
+        [];
+
+
+    for (
+        let i = 0;
+        i < boundaries.length - 1;
+        i++
+    ) {
+
+        boundaryGaps.push(
+            boundaries[i + 1] -
+            boundaries[i]
+        );
+
+    }
+
+
+    const averageBoundaryGap =
+        boundaryGaps.reduce(
+            (
+                sum,
+                gap
+            ) =>
+                sum + gap,
+            0
+        ) /
+        Math.max(
+            1,
+            boundaryGaps.length
+        );
+
+
+    const boundaryVariance =
+        boundaryGaps.reduce(
+            (
+                sum,
+                gap
+            ) => {
+
+                const difference =
+                    gap -
+                    averageBoundaryGap;
+
+
+                return (
+                    sum +
+                    difference *
+                    difference
+                );
+
+            },
+            0
+        ) /
+        Math.max(
+            1,
+            boundaryGaps.length
+        );
+
+
+    const boundaryCV =
+        averageBoundaryGap > 0
+            ? Math.sqrt(
+                boundaryVariance
+            ) /
+                averageBoundaryGap
+            : 999;
+
+
+    if (
+        boundaryCV > 0.25 ||
+        boundaryGaps.some(
+            gap =>
+                gap <= 0
+        )
+    ) {
+
+        return {
+            rows:
+                bestRows,
+            columns:
+                [],
+            strategy:
+                "horizontal rows found; column geometry rejected"
+        };
+
+    }
+
+
+    return {
+        rows:
+            bestRows,
+
+        /*
+        boundary[0] is the far-left Theater label edge. The five
+        showing columns begin at boundary[1], so OCR needs boundaries
+        1 through 6: exactly six showing-column edges.
+        */
+        columns:
+            boundaries.slice(
+                1
+            ),
+
+        strategy:
+            "horizontal-first template geometry"
+    };
 
 }
 
@@ -4427,7 +5137,7 @@ function populateServers() {
 
 
     detectedText.textContent +=
-        "\nSCRIPT VERSION: 13.10\n";
+        "\nSCRIPT VERSION: 13.11\n";
 
 }
 
