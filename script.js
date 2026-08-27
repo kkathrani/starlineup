@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.8
+VERSION 13.9
 ============================================================
 
 Keeps:
@@ -714,6 +714,8 @@ readButton.addEventListener(
                     showing.servers.push({
 
                         name,
+
+                        confidence,
 
                         position:
                             position + 1,
@@ -2952,342 +2954,176 @@ function nameEditDistance(
 
 function canonicalizeServerNames() {
 
-    lineupData.forEach(showing => {
+    /*
+    VERSION 13.9 NAME CLUSTERING
 
-        showing.servers.forEach(server => {
+    OCR can produce several spellings for one person. Instead of
+    deciding only by frequency, build small groups of similar names
+    and choose the most plausible representative.
 
-            server.name =
-                cleanServerName(
-                    server.name
-                );
+    Important examples:
+      Enk  -> Erik
+      Erk  -> Erik
+      L Kishan / Kishan L -> Kishan
 
-        });
+    This is roster-independent; no employee names are hard-coded.
+    */
+
+    lineupData.forEach(
+        showing => {
+
+            showing.servers =
+                showing.servers
+                    .map(
+                        server => {
+
+                            const cleaned =
+                                cleanServerName(
+                                    server.name
+                                );
 
 
-        showing.servers =
-            showing.servers.filter(
-                server =>
-                    Boolean(
-                        server.name
+                            return {
+
+                                ...server,
+
+                                name:
+                                    cleaned,
+
+                                confidence:
+                                    Number(
+                                        server.confidence ||
+                                        0
+                                    )
+
+                            };
+
+                        }
                     )
-            );
+                    .filter(
+                        server =>
+                            Boolean(
+                                server.name
+                            )
+                    );
 
-    });
+        }
+    );
 
 
-    const frequency =
+    const stats =
         new Map();
 
 
-    const displayNames =
-        new Map();
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
+                server => {
+
+                    const key =
+                        normalizeNameKey(
+                            server.name
+                        );
 
 
-    lineupData.forEach(showing => {
-
-        showing.servers.forEach(server => {
-
-            const key =
-                normalizeNameKey(
-                    server.name
-                );
+                    if (!key) {
+                        return;
+                    }
 
 
-            if (!key) {
-                return;
-            }
+                    if (
+                        !stats.has(
+                            key
+                        )
+                    ) {
+
+                        stats.set(
+                            key,
+                            {
+                                key,
+                                display:
+                                    server.name,
+                                count:
+                                    0,
+                                confidenceTotal:
+                                    0
+                            }
+                        );
+
+                    }
 
 
-            frequency.set(
-                key,
-                (
-                    frequency.get(
-                        key
-                    ) ||
-                    0
-                ) +
-                1
+                    const item =
+                        stats.get(
+                            key
+                        );
+
+
+                    item.count++;
+
+
+                    item.confidenceTotal +=
+                        Number(
+                            server.confidence ||
+                            0
+                        );
+
+                }
             );
 
-
-            if (
-                !displayNames.has(
-                    key
-                )
-            ) {
-
-                displayNames.set(
-                    key,
-                    server.name
-                );
-
-            }
-
-        });
-
-    });
+        }
+    );
 
 
-    const keys =
+    const entries =
         [
-            ...displayNames.keys()
+            ...stats.values()
         ];
 
 
-    const aliases =
-        new Map();
+    entries.forEach(
+        item => {
 
-
-    keys.forEach(key => {
-
-        let canonical =
-            key;
-
-
-        const shorterMatches =
-            keys.filter(other => {
-
-                if (
-                    other ===
-                    key
-                ) {
-
-                    return false;
-
-                }
-
-
-                if (
-                    other.length !==
-                    key.length - 1
-                ) {
-
-                    return false;
-
-                }
-
-
-                const removeFirst =
-                    key.slice(
-                        1
-                    );
-
-
-                const removeLast =
-                    key.slice(
-                        0,
-                        -1
-                    );
-
-
-                return (
-
-                    removeFirst ===
-                    other ||
-
-                    removeLast ===
-                    other
-
-                );
-
-            });
-
-
-        if (
-            shorterMatches.length
-        ) {
-
-            shorterMatches.sort(
-                (
-                    a,
-                    b
-                ) =>
-
-                    (
-                        frequency.get(
-                            b
-                        ) ||
-                        0
-                    ) -
-
-                    (
-                        frequency.get(
-                            a
-                        ) ||
-                        0
-                    )
-            );
-
-
-            canonical =
-                shorterMatches[0];
+            item.averageConfidence =
+                item.count
+                    ? item.confidenceTotal /
+                        item.count
+                    : 0;
 
         }
+    );
 
 
-        if (
-            canonical ===
-            key
-        ) {
-
-            const fuzzyMatches =
-                keys
-                    .filter(
-                        other => {
-
-                            if (
-                                other ===
-                                key
-                            ) {
-
-                                return false;
-
-                            }
-
-
-                            const otherFrequency =
-                                frequency.get(
-                                    other
-                                ) || 0;
-
-
-                            const keyFrequency =
-                                frequency.get(
-                                    key
-                                ) || 0;
-
-
-                            if (
-                                otherFrequency <=
-                                keyFrequency
-                            ) {
-
-                                return false;
-
-                            }
-
-
-                            const distance =
-                                nameEditDistance(
-                                    key,
-                                    other
-                                );
-
-
-                            const allowed =
-                                Math.min(
-                                    key.length,
-                                    other.length
-                                ) <= 4
-                                    ? 2
-                                    : 2;
-
-
-                            return (
-                                distance <=
-                                allowed
-                            );
-
-                        }
-                    )
-                    .sort(
-                        (
-                            a,
-                            b
-                        ) => {
-
-                            const da =
-                                nameEditDistance(
-                                    key,
-                                    a
-                                );
-
-
-                            const db =
-                                nameEditDistance(
-                                    key,
-                                    b
-                                );
-
-
-                            if (
-                                da !== db
-                            ) {
-
-                                return da - db;
-
-                            }
-
-
-                            return (
-                                (
-                                    frequency.get(
-                                        b
-                                    ) || 0
-                                ) -
-                                (
-                                    frequency.get(
-                                        a
-                                    ) || 0
-                                )
-                            );
-
-                        }
-                    );
-
-
-            if (
-                fuzzyMatches.length
-            ) {
-
-                canonical =
-                    fuzzyMatches[0];
-
-            }
-
-        }
-
-
-        aliases.set(
-            key,
-            canonical
+    const parent =
+        new Map(
+            entries.map(
+                item =>
+                    [
+                        item.key,
+                        item.key
+                    ]
+            )
         );
 
-    });
 
-
-    function resolveAlias(
+    function findRoot(
         key
     ) {
-
-        const visited =
-            new Set();
-
 
         let current =
             key;
 
 
         while (
-            aliases.has(
-                current
-            ) &&
-            aliases.get(
+            parent.get(
                 current
             ) !==
-            current &&
-            !visited.has(
-                current
-            )
+            current
         ) {
 
-            visited.add(
-                current
-            );
-
-
             current =
-                aliases.get(
+                parent.get(
                     current
                 );
 
@@ -3299,48 +3135,364 @@ function canonicalizeServerNames() {
     }
 
 
-    lineupData.forEach(showing => {
+    function union(
+        a,
+        b
+    ) {
 
-        showing.servers.forEach(server => {
+        const rootA =
+            findRoot(
+                a
+            );
 
-            const originalKey =
-                normalizeNameKey(
-                    server.name
+
+        const rootB =
+            findRoot(
+                b
+            );
+
+
+        if (
+            rootA !==
+            rootB
+        ) {
+
+            parent.set(
+                rootB,
+                rootA
+            );
+
+        }
+
+    }
+
+
+    function shouldClusterNames(
+        a,
+        b
+    ) {
+
+        if (
+            a ===
+            b
+        ) {
+
+            return true;
+
+        }
+
+
+        /*
+        Classic stray-character OCR:
+        Kishan <-> Lkishan
+        Kishan <-> Kishanl
+
+        Prefer grouping these so the shorter clean spelling can win.
+        */
+        if (
+            Math.abs(
+                a.length -
+                b.length
+            ) ===
+            1
+        ) {
+
+            const longer =
+                a.length >
+                b.length
+                    ? a
+                    : b;
+
+
+            const shorter =
+                a.length >
+                b.length
+                    ? b
+                    : a;
+
+
+            if (
+                longer.slice(
+                    1
+                ) ===
+                shorter ||
+
+                longer.slice(
+                    0,
+                    -1
+                ) ===
+                shorter
+            ) {
+
+                return true;
+
+            }
+
+        }
+
+
+        const distance =
+            nameEditDistance(
+                a,
+                b
+            );
+
+
+        /*
+        Short names are where OCR most often turns "ri" into "n"
+        or drops a letter. Two edits is intentionally allowed here.
+        */
+        if (
+            Math.min(
+                a.length,
+                b.length
+            ) <=
+            4
+        ) {
+
+            return (
+                distance <=
+                2
+            );
+
+        }
+
+
+        /*
+        Longer names only merge when they are very close.
+        */
+        return (
+            distance <=
+            1
+        );
+
+    }
+
+
+    for (
+        let i = 0;
+        i < entries.length;
+        i++
+    ) {
+
+        for (
+            let j = i + 1;
+            j < entries.length;
+            j++
+        ) {
+
+            if (
+                shouldClusterNames(
+                    entries[i].key,
+                    entries[j].key
+                )
+            ) {
+
+                union(
+                    entries[i].key,
+                    entries[j].key
                 );
 
+            }
 
-            const finalKey =
-                resolveAlias(
-                    originalKey
+        }
+
+    }
+
+
+    const groups =
+        new Map();
+
+
+    entries.forEach(
+        item => {
+
+            const root =
+                findRoot(
+                    item.key
                 );
 
 
             if (
-                displayNames.has(
-                    finalKey
+                !groups.has(
+                    root
                 )
             ) {
 
-                server.name =
-                    displayNames.get(
-                        finalKey
-                    );
+                groups.set(
+                    root,
+                    []
+                );
 
             }
 
-        });
 
-    });
+            groups.get(
+                root
+            ).push(
+                item
+            );
+
+        }
+    );
 
 
-    lineupData.forEach(showing => {
-
-        const seen =
-            new Set();
+    const canonicalFor =
+        new Map();
 
 
-        showing.servers =
-            showing.servers.filter(
+    groups.forEach(
+        group => {
+
+            /*
+            First handle the old "extra first/last character"
+            situation. If a longer spelling is exactly the shorter
+            spelling plus one edge character, favor the shorter one.
+            */
+            const edgeTrimTargets =
+                new Set();
+
+
+            group.forEach(
+                longerItem => {
+
+                    group.forEach(
+                        shorterItem => {
+
+                            if (
+                                longerItem ===
+                                shorterItem
+                            ) {
+
+                                return;
+
+                            }
+
+
+                            if (
+                                longerItem.key.length !==
+                                shorterItem.key.length + 1
+                            ) {
+
+                                return;
+
+                            }
+
+
+                            if (
+                                longerItem.key.slice(
+                                    1
+                                ) ===
+                                shorterItem.key ||
+
+                                longerItem.key.slice(
+                                    0,
+                                    -1
+                                ) ===
+                                shorterItem.key
+                            ) {
+
+                                edgeTrimTargets.add(
+                                    shorterItem.key
+                                );
+
+                            }
+
+                        }
+                    );
+
+                }
+            );
+
+
+            let candidates =
+                edgeTrimTargets.size
+                    ? group.filter(
+                        item =>
+                            edgeTrimTargets.has(
+                                item.key
+                            )
+                    )
+                    : [
+                        ...group
+                    ];
+
+
+            /*
+            Otherwise prefer the more complete spelling for short
+            damaged OCR. This is what makes Enk/Erk resolve to Erik.
+            Confidence and frequency break ties.
+            */
+            candidates.sort(
+                (
+                    a,
+                    b
+                ) => {
+
+                    if (
+                        b.key.length !==
+                        a.key.length
+                    ) {
+
+                        return (
+                            b.key.length -
+                            a.key.length
+                        );
+
+                    }
+
+
+                    if (
+                        Math.abs(
+                            b.averageConfidence -
+                            a.averageConfidence
+                        ) >
+                        3
+                    ) {
+
+                        return (
+                            b.averageConfidence -
+                            a.averageConfidence
+                        );
+
+                    }
+
+
+                    return (
+                        b.count -
+                        a.count
+                    );
+
+                }
+            );
+
+
+            const winner =
+                candidates[0];
+
+
+            group.forEach(
+                item => {
+
+                    canonicalFor.set(
+                        item.key,
+                        winner.display
+                    );
+
+                }
+            );
+
+        }
+    );
+
+
+    /*
+    Apply the chosen spelling back to every assignment.
+    */
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
                 server => {
 
                     const key =
@@ -3349,33 +3501,65 @@ function canonicalizeServerNames() {
                         );
 
 
-                    if (!key) {
-                        return false;
-                    }
-
-
                     if (
-                        seen.has(
+                        canonicalFor.has(
                             key
                         )
                     ) {
 
-                        return false;
+                        server.name =
+                            canonicalFor.get(
+                                key
+                            );
 
                     }
-
-
-                    seen.add(
-                        key
-                    );
-
-
-                    return true;
 
                 }
             );
 
-    });
+
+            /*
+            Never keep the same person twice in one showing after
+            aliases have been merged.
+            */
+            const seen =
+                new Set();
+
+
+            showing.servers =
+                showing.servers.filter(
+                    server => {
+
+                        const key =
+                            normalizeNameKey(
+                                server.name
+                            );
+
+
+                        if (
+                            !key ||
+                            seen.has(
+                                key
+                            )
+                        ) {
+
+                            return false;
+
+                        }
+
+
+                        seen.add(
+                            key
+                        );
+
+
+                        return true;
+
+                    }
+                );
+
+        }
+    );
 
 }
 
@@ -3676,65 +3860,12 @@ function formatTime(
 function populateServers() {
 
     /*
-    Final safety filter for the dropdown.
-
-    This intentionally re-validates every name AFTER all OCR and
-    canonicalization are finished. That way even if a noisy OCR
-    fragment somehow survives an earlier cleanup step, it cannot
-    appear in the "Who are you?" list.
+    Build statistics AFTER canonicalization. A real server normally
+    appears in multiple assignments. A one-off name is still allowed,
+    but only when OCR confidence is exceptionally strong.
     */
 
-    const frequency =
-        new Map();
-
-
-    lineupData.forEach(
-        showing => {
-
-            showing.servers.forEach(
-                server => {
-
-                    const name =
-                        cleanServerName(
-                            server.name
-                        );
-
-
-                    if (!name) {
-                        return;
-                    }
-
-
-                    server.name =
-                        name;
-
-
-                    const key =
-                        normalizeNameKey(
-                            name
-                        );
-
-
-                    frequency.set(
-                        key,
-                        (
-                            frequency.get(
-                                key
-                            ) || 0
-                        ) + 1
-                    );
-
-                }
-            );
-
-        }
-    );
-
-
-    /*
-    Gather candidate display names.
-    */
-    const displayByKey =
+    const stats =
         new Map();
 
 
@@ -3762,17 +3893,46 @@ function populateServers() {
 
 
                     if (
-                        !displayByKey.has(
+                        !stats.has(
                             key
                         )
                     ) {
 
-                        displayByKey.set(
+                        stats.set(
                             key,
-                            name
+                            {
+                                name,
+                                count:
+                                    0,
+                                confidenceTotal:
+                                    0,
+                                servers:
+                                    []
+                            }
                         );
 
                     }
+
+
+                    const item =
+                        stats.get(
+                            key
+                        );
+
+
+                    item.count++;
+
+
+                    item.confidenceTotal +=
+                        Number(
+                            server.confidence ||
+                            0
+                        );
+
+
+                    item.servers.push(
+                        server
+                    );
 
                 }
             );
@@ -3781,196 +3941,102 @@ function populateServers() {
     );
 
 
-    const strongKeys =
-        [
-            ...displayByKey.keys()
-        ]
-            .filter(
-                key =>
-                    (
-                        frequency.get(
-                            key
-                        ) || 0
-                    ) >= 2
-            );
+    const allowedKeys =
+        new Set();
+
+
+    stats.forEach(
+        (
+            item,
+            key
+        ) => {
+
+            const averageConfidence =
+                item.count
+                    ? item.confidenceTotal /
+                        item.count
+                    : 0;
+
+
+            /*
+            Repeated names are trusted. A one-off is kept only when
+            Tesseract was very confident. This removes isolated blank
+            cell hallucinations such as "Freese" while still allowing
+            a legitimate server with only one assignment if the print
+            was read clearly.
+            */
+            if (
+                item.count >=
+                2 ||
+
+                averageConfidence >=
+                88
+            ) {
+
+                allowedKeys.add(
+                    key
+                );
+
+            }
+
+
+            else {
+
+                detectedText.textContent +=
+
+                    `Rejected one-off name "${item.name}" ` +
+                    `(${Math.round(averageConfidence)}% confidence)\n`;
+
+            }
+
+        }
+    );
 
 
     /*
-    If a one-off OCR result is very close to a name that appears
-    repeatedly, map it to the repeated name. This handles things
-    like "Erk" or "Enk" when "Erik" appears elsewhere.
+    Remove rejected OCR artifacts from lineupData itself, not only
+    from the dropdown. That prevents a rogue name from retaining a
+    phantom schedule assignment behind the scenes.
     */
     lineupData.forEach(
         showing => {
 
-            showing.servers.forEach(
-                server => {
+            showing.servers =
+                showing.servers.filter(
+                    server =>
 
-                    const originalName =
-                        cleanServerName(
-                            server.name
-                        );
-
-
-                    if (!originalName) {
-                        return;
-                    }
-
-
-                    const originalKey =
-                        normalizeNameKey(
-                            originalName
-                        );
-
-
-                    if (
-                        (
-                            frequency.get(
-                                originalKey
-                            ) || 0
-                        ) >= 2
-                    ) {
-
-                        return;
-
-                    }
-
-
-                    let bestKey =
-                        null;
-
-
-                    let bestDistance =
-                        Infinity;
-
-
-                    /*
-                    Compare short damaged reads against every other detected
-                    name, not only names seen 2+ times. This catches cases such
-                    as "Enk" -> "Erik" even when Erik itself appears only once
-                    elsewhere in the lineup.
-                    */
-                    [
-                        ...displayByKey.keys()
-                    ].forEach(
-                        key => {
-
-                            if (
-                                key ===
-                                originalKey
-                            ) {
-
-                                return;
-
-                            }
-
-
-                            const distance =
-                                nameEditDistance(
-                                    originalKey,
-                                    key
-                                );
-
-
-                            const allowed =
-                                originalKey.length <= 4
-                                    ? 2
-                                    : 1;
-
-
-                            const candidateFrequency =
-                                frequency.get(
-                                    key
-                                ) || 0;
-
-
-                            const originalFrequency =
-                                frequency.get(
-                                    originalKey
-                                ) || 0;
-
-
-                            const candidateIsBetter =
-                                candidateFrequency >
-                                originalFrequency ||
-
-                                (
-                                    originalKey.length <= 4 &&
-                                    key.length >
-                                    originalKey.length
-                                );
-
-
-                            if (
-                                candidateIsBetter &&
-                                distance <= allowed &&
-                                distance < bestDistance
-                            ) {
-
-                                bestDistance =
-                                    distance;
-
-
-                                bestKey =
-                                    key;
-
-                            }
-
-                        }
-                    );
-
-
-                    if (
-                        bestKey &&
-                        displayByKey.has(
-                            bestKey
+                        allowedKeys.has(
+                            normalizeNameKey(
+                                server.name
+                            )
                         )
-                    ) {
-
-                        server.name =
-                            displayByKey.get(
-                                bestKey
-                            );
-
-                    }
-
-                }
-            );
+                );
 
         }
     );
 
 
-    /*
-    Build dropdown only from names that survive the strict cleanup.
-    */
     const names =
         new Set();
 
 
-    lineupData.forEach(
-        showing => {
+    stats.forEach(
+        (
+            item,
+            key
+        ) => {
 
-            showing.servers.forEach(
-                server => {
+            if (
+                allowedKeys.has(
+                    key
+                )
+            ) {
 
-                    const name =
-                        cleanServerName(
-                            server.name
-                        );
+                names.add(
+                    item.name
+                );
 
-
-                    if (!name) {
-                        return;
-                    }
-
-
-                    names.add(
-                        name
-                    );
-
-                }
-            );
+            }
 
         }
     );
@@ -4018,17 +4084,14 @@ function populateServers() {
         );
 
 
-    /*
-    Visible diagnostic in Detected Text so we can confirm the
-    browser is executing this exact script version.
-    */
     detectedText.textContent +=
-        "\nSCRIPT VERSION: 13.8\n";
+        "\nSCRIPT VERSION: 13.9\n";
 
 }
 
 
 // =========================================================
+// SHOW PERSONAL SCHEDULE// =========================================================
 // SHOW PERSONAL SCHEDULE
 // =========================================================
 
