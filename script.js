@@ -1,62 +1,84 @@
 /*
-=========================================================
+============================================================
 STAR CINEMA PERSONAL LINEUP
-Adaptive Parser - Version 5
-=========================================================
+VERSION 6 — GRID-DETECTION PARSER
+============================================================
 
-Workflow:
+This version:
 
-1. Upload screenshot
-2. Detect spreadsheet bounds
-3. OCR screenshot once with positional data
-4. Locate Theater 1-8
-5. Normalize theater/showing cells
-6. Read movie/time/server cells
-7. Read theater row rules
-8. Apply one/two/three-server rules
-9. Build chronological personal schedule
+✓ Works with different screenshot dimensions
+✓ Finds the spreadsheet automatically
+✓ Detects actual vertical grid lines
+✓ Detects actual horizontal grid lines
+✓ Uses OCR word positions inside detected cells
+✓ Does NOT assume fixed pixel coordinates
+✓ Handles 1-server = ALL ROWS
+✓ Handles 2-server row splits
+✓ Handles parenthetical third servers
+✓ Handles over-50 row changes
+✓ Sorts the final schedule chronologically
+============================================================
 */
 
 
-/*
-=========================================================
-PAGE ELEMENTS
-=========================================================
-*/
+/* =========================================================
+   PAGE ELEMENTS
+========================================================= */
 
-const imageInput = document.getElementById("lineupImage");
-const imagePreview = document.getElementById("imagePreview");
-const previewContainer = document.getElementById("previewContainer");
+const imageInput =
+    document.getElementById("lineupImage");
 
-const readButton = document.getElementById("readButton");
+const imagePreview =
+    document.getElementById("imagePreview");
 
-const serverSection = document.getElementById("serverSection");
-const serverSelect = document.getElementById("serverSelect");
+const previewContainer =
+    document.getElementById("previewContainer");
 
-const scheduleSection = document.getElementById("scheduleSection");
-const scheduleList = document.getElementById("scheduleList");
+const readButton =
+    document.getElementById("readButton");
 
-const scheduleName = document.getElementById("scheduleName");
-const scheduleDate = document.getElementById("scheduleDate");
+const serverSection =
+    document.getElementById("serverSection");
 
-const loading = document.getElementById("loading");
-const progressBar = document.getElementById("progressBar");
+const serverSelect =
+    document.getElementById("serverSelect");
 
-const debugSection = document.getElementById("debugSection");
-const detectedText = document.getElementById("detectedText");
+const scheduleSection =
+    document.getElementById("scheduleSection");
+
+const scheduleList =
+    document.getElementById("scheduleList");
+
+const scheduleName =
+    document.getElementById("scheduleName");
+
+const scheduleDate =
+    document.getElementById("scheduleDate");
+
+const loading =
+    document.getElementById("loading");
+
+const progressBar =
+    document.getElementById("progressBar");
+
+const debugSection =
+    document.getElementById("debugSection");
+
+const detectedText =
+    document.getElementById("detectedText");
+
 
 let uploadedFile = null;
+
 let lineupData = [];
 
 
-/*
-=========================================================
-FALLBACK ROW RULES
+/* =========================================================
+   FALLBACK THEATER ROW RULES
 
-These are ONLY used if OCR cannot successfully read the
-row labels printed on the left side of the spreadsheet.
-=========================================================
-*/
+   These are only used when OCR cannot read the row labels
+   on the left side of the spreadsheet.
+========================================================= */
 
 const fallbackRows = {
 
@@ -107,1036 +129,460 @@ const fallbackRows = {
         { normal: "BD",   over50: "BE" },
         { normal: "C",    over50: "C" }
     ]
+
 };
 
 
-/*
-=========================================================
-UPLOAD IMAGE
-=========================================================
-*/
+/* =========================================================
+   IMAGE UPLOAD
+========================================================= */
 
-imageInput.addEventListener("change", () => {
+imageInput.addEventListener(
+    "change",
+    () => {
 
-    uploadedFile = imageInput.files[0];
-
-    if (!uploadedFile) {
-        return;
-    }
-
-    const previewURL = URL.createObjectURL(uploadedFile);
-
-    imagePreview.src = previewURL;
-
-    imagePreview.onload = () => {
-        URL.revokeObjectURL(previewURL);
-    };
-
-    previewContainer.classList.remove("hidden");
-    readButton.classList.remove("hidden");
-
-    serverSection.classList.add("hidden");
-    scheduleSection.classList.add("hidden");
-    debugSection.classList.add("hidden");
-
-    lineupData = [];
-});
+        uploadedFile =
+            imageInput.files[0];
 
 
-/*
-=========================================================
-READ LINEUP
-=========================================================
-*/
-
-readButton.addEventListener("click", async () => {
-
-    if (!uploadedFile) {
-
-        alert("Upload a lineup screenshot first.");
-        return;
-    }
-
-
-    readButton.disabled = true;
-    readButton.textContent = "Reading Lineup...";
-
-    loading.classList.remove("hidden");
-
-    progressBar.style.width = "0%";
-
-    serverSection.classList.add("hidden");
-    scheduleSection.classList.add("hidden");
-
-    debugSection.classList.remove("hidden");
-
-    detectedText.textContent =
-        "Preparing image...\n";
-
-
-    try {
-
-        /*
-        ---------------------------
-        Load original image
-        ---------------------------
-        */
-
-        const image =
-            await loadImage(uploadedFile);
-
-
-        detectedText.textContent +=
-            `Original image: ${image.width} x ${image.height}\n`;
-
-
-        /*
-        ---------------------------
-        Detect actual spreadsheet
-        ---------------------------
-        */
-
-        const sheet =
-            detectSheetBounds(image);
-
-
-        detectedText.textContent +=
-            `Spreadsheet detected:\n`;
-
-        detectedText.textContent +=
-            `x=${Math.round(sheet.left)}, ` +
-            `y=${Math.round(sheet.top)}, ` +
-            `w=${Math.round(sheet.width)}, ` +
-            `h=${Math.round(sheet.height)}\n`;
-
-
-        /*
-        ---------------------------
-        Preprocess image for OCR
-        ---------------------------
-        */
-
-        const processed =
-            preprocessImage(image);
-
-
-        detectedText.textContent +=
-            "Starting OCR...\n";
-
-
-        /*
-        ---------------------------
-        Create Tesseract worker
-        ---------------------------
-        */
-
-        const worker =
-            await Tesseract.createWorker(
-                "eng",
-                1,
-                {
-                    logger: message => {
-
-                        if (
-                            message.status ===
-                            "recognizing text"
-                        ) {
-
-                            const percentage =
-                                Math.round(
-                                    message.progress * 100
-                                );
-
-                            progressBar.style.width =
-                                percentage + "%";
-                        }
-                    }
-                }
-            );
-
-
-        /*
-        ---------------------------
-        Perform OCR
-        ---------------------------
-        */
-
-        const result =
-            await worker.recognize(
-                processed.canvas,
-                undefined,
-                {
-                    text: true,
-                    tsv: true
-                }
-            );
-
-
-        await worker.terminate();
-
-
-        if (!result.data) {
-
-            throw new Error(
-                "OCR returned no data."
-            );
+        if (!uploadedFile) {
+            return;
         }
 
 
-        if (!result.data.tsv) {
-
-            throw new Error(
-                "OCR did not return positional data."
-            );
-        }
-
-
-        /*
-        ---------------------------
-        Convert TSV to words
-        ---------------------------
-        */
-
-        const words =
-            parseTSV(
-                result.data.tsv,
-                processed.scale
+        const url =
+            URL.createObjectURL(
+                uploadedFile
             );
 
 
-        detectedText.textContent +=
-            `OCR words found: ${words.length}\n`;
+        imagePreview.src =
+            url;
 
 
-        /*
-        ---------------------------
-        Determine theater layout
-        ---------------------------
-        */
+        imagePreview.onload =
+            () => {
 
-        const layout =
-            detectLayout(
-                image,
-                sheet,
-                words
-            );
+                URL.revokeObjectURL(
+                    url
+                );
+
+            };
 
 
-        /*
-        ---------------------------
-        Parse entire lineup
-        ---------------------------
-        */
-
-        lineupData =
-            parseLineup(
-                words,
-                layout
-            );
+        previewContainer
+            .classList
+            .remove("hidden");
 
 
-        /*
-        ---------------------------
-        Apply business rules
-        ---------------------------
-        */
-
-        lineupData.forEach(
-            applyServerRules
-        );
+        readButton
+            .classList
+            .remove("hidden");
 
 
-        /*
-        ---------------------------
-        Debug output
-        ---------------------------
-        */
-
-        showDetectedLineup(
-            layout
-        );
+        serverSection
+            .classList
+            .add("hidden");
 
 
-        /*
-        ---------------------------
-        Build server dropdown
-        ---------------------------
-        */
-
-        populateServers();
+        scheduleSection
+            .classList
+            .add("hidden");
 
 
-        if (!lineupData.length) {
+        debugSection
+            .classList
+            .add("hidden");
+
+
+        lineupData = [];
+
+    }
+);
+
+
+/* =========================================================
+   READ LINEUP
+========================================================= */
+
+readButton.addEventListener(
+    "click",
+    async () => {
+
+        if (!uploadedFile) {
 
             alert(
-                "No showings were detected. " +
-                "Scroll down to the Detected Text section."
+                "Upload a lineup screenshot first."
             );
 
-        } else {
+            return;
 
-            serverSection.classList.remove(
-                "hidden"
-            );
-
-            serverSection.scrollIntoView({
-                behavior: "smooth"
-            });
         }
 
-    }
 
-    catch (error) {
+        readButton.disabled =
+            true;
 
-        console.error(error);
+        readButton.textContent =
+            "Reading Lineup...";
 
-        detectedText.textContent +=
-            "\n\nERROR\n====================\n";
 
-        detectedText.textContent +=
-            (
-                error?.stack ||
-                error?.message ||
-                String(error)
+        loading
+            .classList
+            .remove("hidden");
+
+
+        progressBar.style.width =
+            "0%";
+
+
+        serverSection
+            .classList
+            .add("hidden");
+
+
+        scheduleSection
+            .classList
+            .add("hidden");
+
+
+        debugSection
+            .classList
+            .remove("hidden");
+
+
+        detectedText.textContent =
+            "Preparing image...\n";
+
+
+        try {
+
+            /* -----------------------------------------
+               Load image
+            ------------------------------------------ */
+
+            const image =
+                await loadImage(
+                    uploadedFile
+                );
+
+
+            detectedText.textContent +=
+                `Image: ${image.width} × ${image.height}\n`;
+
+
+            /* -----------------------------------------
+               Make analysis canvas
+            ------------------------------------------ */
+
+            const analysis =
+                createAnalysisCanvas(
+                    image
+                );
+
+
+            /* -----------------------------------------
+               Detect major vertical grid lines
+            ------------------------------------------ */
+
+            const verticalLines =
+                detectShowingColumns(
+                    analysis
+                );
+
+
+            detectedText.textContent +=
+                `Showing column edges found: ${verticalLines.length}\n`;
+
+
+            if (
+                verticalLines.length !== 6
+            ) {
+
+                throw new Error(
+                    "Could not reliably detect the 5 showing columns. " +
+                    `Found ${verticalLines.length} column edges instead of 6.`
+                );
+
+            }
+
+
+            /* -----------------------------------------
+               Detect horizontal theater grid
+            ------------------------------------------ */
+
+            const horizontalLines =
+                detectTheaterGrid(
+                    analysis,
+                    verticalLines[0],
+                    verticalLines[5]
+                );
+
+
+            detectedText.textContent +=
+                `Theater grid lines found: ${horizontalLines.length}\n`;
+
+
+            if (
+                horizontalLines.length !== 41
+            ) {
+
+                throw new Error(
+                    "Could not reliably detect the theater rows. " +
+                    `Found ${horizontalLines.length} grid lines instead of 41.`
+                );
+
+            }
+
+
+            /* -----------------------------------------
+               OCR image
+            ------------------------------------------ */
+
+            detectedText.textContent +=
+                "Starting OCR...\n";
+
+
+            const processed =
+                preprocessForOCR(
+                    image
+                );
+
+
+            const worker =
+                await Tesseract.createWorker(
+                    "eng",
+                    1,
+                    {
+
+                        logger:
+                            message => {
+
+                                if (
+                                    message.status ===
+                                    "recognizing text"
+                                ) {
+
+                                    const percent =
+                                        Math.round(
+                                            message.progress *
+                                            100
+                                        );
+
+
+                                    progressBar.style.width =
+                                        percent + "%";
+
+                                }
+
+                            }
+
+                    }
+                );
+
+
+            const result =
+                await worker.recognize(
+                    processed.canvas,
+                    undefined,
+                    {
+                        text: true,
+                        tsv: true
+                    }
+                );
+
+
+            await worker.terminate();
+
+
+            if (
+                !result.data ||
+                !result.data.tsv
+            ) {
+
+                throw new Error(
+                    "Tesseract did not provide positional OCR data."
+                );
+
+            }
+
+
+            const words =
+                parseTSV(
+                    result.data.tsv,
+                    processed.scale
+                );
+
+
+            detectedText.textContent +=
+                `OCR words: ${words.length}\n`;
+
+
+            /* -----------------------------------------
+               Parse cells
+            ------------------------------------------ */
+
+            lineupData =
+                parseDetectedGrid(
+                    words,
+                    verticalLines,
+                    horizontalLines
+                );
+
+
+            /* -----------------------------------------
+               Apply Star Cinema assignment rules
+            ------------------------------------------ */
+
+            lineupData.forEach(
+                applyAssignmentRules
             );
 
-        alert(
-            "There was a problem reading the lineup. " +
-            "The technical error is shown below."
-        );
+
+            /* -----------------------------------------
+               Display interpreted result
+            ------------------------------------------ */
+
+            showDetectedLineup(
+                verticalLines,
+                horizontalLines
+            );
+
+
+            populateServers();
+
+
+            if (
+                lineupData.length === 0
+            ) {
+
+                alert(
+                    "The grid was detected, but no showtimes were successfully read. " +
+                    "Scroll to Detected Text."
+                );
+
+            }
+
+            else {
+
+                serverSection
+                    .classList
+                    .remove("hidden");
+
+
+                serverSection
+                    .scrollIntoView({
+                        behavior: "smooth"
+                    });
+
+            }
+
+        }
+
+        catch (error) {
+
+            console.error(
+                error
+            );
+
+
+            detectedText.textContent +=
+                "\n\nERROR\n" +
+                "====================================\n" +
+                (
+                    error?.stack ||
+                    error?.message ||
+                    String(error)
+                );
+
+
+            alert(
+                "There was a problem reading the lineup. " +
+                "Scroll down to Detected Text."
+            );
+
+        }
+
+
+        loading
+            .classList
+            .add("hidden");
+
+
+        readButton.disabled =
+            false;
+
+
+        readButton.textContent =
+            "Read Lineup";
+
     }
+);
 
 
-    loading.classList.add("hidden");
-
-    readButton.disabled = false;
-    readButton.textContent = "Read Lineup";
-});
-
-
-/*
-=========================================================
-LOAD IMAGE
-=========================================================
-*/
+/* =========================================================
+   LOAD IMAGE
+========================================================= */
 
 function loadImage(file) {
 
     return new Promise(
         (resolve, reject) => {
 
-            const img =
+            const image =
                 new Image();
 
+
             const url =
-                URL.createObjectURL(file);
-
-
-            img.onload = () => {
-
-                URL.revokeObjectURL(url);
-                resolve(img);
-            };
-
-
-            img.onerror = () => {
-
-                URL.revokeObjectURL(url);
-
-                reject(
-                    new Error(
-                        "Could not load image."
-                    )
+                URL.createObjectURL(
+                    file
                 );
-            };
 
 
-            img.src = url;
-        }
-    );
-}
+            image.onload =
+                () => {
 
+                    URL.revokeObjectURL(
+                        url
+                    );
 
-/*
-=========================================================
-DETECT SPREADSHEET BOUNDS
+                    resolve(
+                        image
+                    );
 
-This means screenshots do NOT need to have identical
-pixel dimensions.
+                };
 
-We look for the large light-colored spreadsheet region
-inside the image.
-=========================================================
-*/
 
-function detectSheetBounds(image) {
+            image.onerror =
+                () => {
 
-    const canvas =
-        document.createElement("canvas");
+                    URL.revokeObjectURL(
+                        url
+                    );
 
-    canvas.width = image.width;
-    canvas.height = image.height;
+                    reject(
+                        new Error(
+                            "Could not load uploaded image."
+                        )
+                    );
 
+                };
 
-    const ctx =
-        canvas.getContext(
-            "2d",
-            {
-                willReadFrequently: true
-            }
-        );
 
+            image.src =
+                url;
 
-    ctx.drawImage(
-        image,
-        0,
-        0
-    );
-
-
-    const imageData =
-        ctx.getImageData(
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-
-
-    const data =
-        imageData.data;
-
-
-    const width =
-        canvas.width;
-
-    const height =
-        canvas.height;
-
-
-    /*
-    Count light/gray spreadsheet pixels in every row.
-    */
-
-    const rowScores =
-        new Array(height)
-            .fill(0);
-
-    const colScores =
-        new Array(width)
-            .fill(0);
-
-
-    for (
-        let y = 0;
-        y < height;
-        y++
-    ) {
-
-        for (
-            let x = 0;
-            x < width;
-            x++
-        ) {
-
-            const i =
-                (
-                    y * width +
-                    x
-                ) * 4;
-
-
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-
-
-            const brightness =
-                (
-                    r +
-                    g +
-                    b
-                ) / 3;
-
-
-            /*
-            Spreadsheet is mostly white/gray.
-            Black screenshot margins do not count.
-            */
-
-            if (
-                brightness > 115
-            ) {
-
-                rowScores[y]++;
-                colScores[x]++;
-            }
-        }
-    }
-
-
-    /*
-    A row is considered part of the spreadsheet when
-    enough of it is bright.
-    */
-
-    const rowThreshold =
-        width * 0.12;
-
-    const colThreshold =
-        height * 0.12;
-
-
-    let top = 0;
-    let bottom = height - 1;
-    let left = 0;
-    let right = width - 1;
-
-
-    for (
-        let y = 0;
-        y < height;
-        y++
-    ) {
-
-        if (
-            rowScores[y] >
-            rowThreshold
-        ) {
-
-            top = y;
-            break;
-        }
-    }
-
-
-    for (
-        let y = height - 1;
-        y >= 0;
-        y--
-    ) {
-
-        if (
-            rowScores[y] >
-            rowThreshold
-        ) {
-
-            bottom = y;
-            break;
-        }
-    }
-
-
-    for (
-        let x = 0;
-        x < width;
-        x++
-    ) {
-
-        if (
-            colScores[x] >
-            colThreshold
-        ) {
-
-            left = x;
-            break;
-        }
-    }
-
-
-    for (
-        let x = width - 1;
-        x >= 0;
-        x--
-    ) {
-
-        if (
-            colScores[x] >
-            colThreshold
-        ) {
-
-            right = x;
-            break;
-        }
-    }
-
-
-    /*
-    Sanity check.
-
-    If automatic detection fails, safely use
-    the whole image.
-    */
-
-    if (
-        right - left <
-        width * 0.5 ||
-        bottom - top <
-        height * 0.5
-    ) {
-
-        return {
-            left: 0,
-            top: 0,
-            right: width,
-            bottom: height,
-            width,
-            height
-        };
-    }
-
-
-    return {
-
-        left,
-        top,
-
-        right,
-        bottom,
-
-        width:
-            right - left,
-
-        height:
-            bottom - top
-    };
-}
-
-
-/*
-=========================================================
-OCR PREPROCESSING
-=========================================================
-*/
-
-function preprocessImage(image) {
-
-    /*
-    2X enlargement improves small spreadsheet text.
-    */
-
-    const scale = 2;
-
-
-    const canvas =
-        document.createElement(
-            "canvas"
-        );
-
-
-    canvas.width =
-        image.width * scale;
-
-    canvas.height =
-        image.height * scale;
-
-
-    const ctx =
-        canvas.getContext(
-            "2d",
-            {
-                willReadFrequently: true
-            }
-        );
-
-
-    ctx.imageSmoothingEnabled = false;
-
-
-    ctx.drawImage(
-        image,
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
-
-
-    const imageData =
-        ctx.getImageData(
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-
-
-    const data =
-        imageData.data;
-
-
-    for (
-        let i = 0;
-        i < data.length;
-        i += 4
-    ) {
-
-        const r =
-            data[i];
-
-        const g =
-            data[i + 1];
-
-        const b =
-            data[i + 2];
-
-
-        const gray =
-            (
-                0.299 * r +
-                0.587 * g +
-                0.114 * b
-            );
-
-
-        /*
-        High contrast black/white.
-        */
-
-        const value =
-            gray < 185
-                ? 0
-                : 255;
-
-
-        data[i] =
-            value;
-
-        data[i + 1] =
-            value;
-
-        data[i + 2] =
-            value;
-    }
-
-
-    ctx.putImageData(
-        imageData,
-        0,
-        0
-    );
-
-
-    return {
-        canvas,
-        scale
-    };
-}
-
-
-/*
-=========================================================
-PARSE TESSERACT TSV
-=========================================================
-*/
-
-function parseTSV(tsv, scale) {
-
-    const lines =
-        tsv
-            .trim()
-            .split("\n");
-
-
-    if (
-        lines.length < 2
-    ) {
-
-        return [];
-    }
-
-
-    const headers =
-        lines[0]
-            .split("\t");
-
-
-    const indexes = {};
-
-
-    headers.forEach(
-        (header, index) => {
-
-            indexes[header] =
-                index;
         }
     );
 
-
-    const words = [];
-
-
-    for (
-        let i = 1;
-        i < lines.length;
-        i++
-    ) {
-
-        const values =
-            lines[i].split("\t");
-
-
-        const text =
-            (
-                values[
-                    indexes.text
-                ] || ""
-            ).trim();
-
-
-        if (!text) {
-            continue;
-        }
-
-
-        const confidence =
-            parseFloat(
-                values[
-                    indexes.conf
-                ]
-            );
-
-
-        if (
-            Number.isFinite(confidence) &&
-            confidence < 15
-        ) {
-
-            continue;
-        }
-
-
-        const left =
-            parseFloat(
-                values[
-                    indexes.left
-                ]
-            ) / scale;
-
-
-        const top =
-            parseFloat(
-                values[
-                    indexes.top
-                ]
-            ) / scale;
-
-
-        const width =
-            parseFloat(
-                values[
-                    indexes.width
-                ]
-            ) / scale;
-
-
-        const height =
-            parseFloat(
-                values[
-                    indexes.height
-                ]
-            ) / scale;
-
-
-        if (
-            !Number.isFinite(left) ||
-            !Number.isFinite(top)
-        ) {
-
-            continue;
-        }
-
-
-        words.push({
-
-            text,
-
-            confidence,
-
-            left,
-            top,
-            width,
-            height,
-
-            centerX:
-                left +
-                width / 2,
-
-            centerY:
-                top +
-                height / 2
-        });
-    }
-
-
-    return words;
 }
 
 
-/*
-=========================================================
-DETECT LAYOUT
+/* =========================================================
+   ANALYSIS CANVAS
+========================================================= */
 
-Coordinates are normalized RELATIVE TO THE DETECTED SHEET,
-not to the screenshot's raw pixel size.
-=========================================================
-*/
-
-function detectLayout(
-    image,
-    sheet,
-    words
-) {
-
-    /*
-    The sheet contains:
-
-    Column A = theater information
-    Columns B-F = 5 possible showings
-    */
-
-
-    const vertical =
-        detectVerticalGridLines(
-            image,
-            sheet
-        );
-
-
-    /*
-    If actual line detection fails, use proportions
-    INSIDE the detected spreadsheet.
-
-    These are scale-independent.
-    */
-
-    let columnEdges;
-
-
-    if (
-        vertical.length >= 7
-    ) {
-
-        columnEdges =
-            chooseBestSevenLines(
-                vertical,
-                sheet
-            );
-
-    } else {
-
-        columnEdges = [
-
-            sheet.left,
-
-            sheet.left +
-            sheet.width * 0.154,
-
-            sheet.left +
-            sheet.width * 0.323,
-
-            sheet.left +
-            sheet.width * 0.492,
-
-            sheet.left +
-            sheet.width * 0.661,
-
-            sheet.left +
-            sheet.width * 0.830,
-
-            sheet.right
-
-        ];
-    }
-
-
-    /*
-    Find Theater labels with OCR.
-
-    This allows vertical positioning to adapt if
-    the screenshot includes more/less header area.
-    */
-
-    const theaterPositions =
-        findTheaterPositions(
-            words
-        );
-
-
-    let theaterTop;
-    let theaterHeight;
-
-
-    if (
-        theaterPositions.length >= 4
-    ) {
-
-        const fitted =
-            fitTheaterPositions(
-                theaterPositions
-            );
-
-
-        theaterHeight =
-            fitted.spacing;
-
-
-        /*
-        Theater label is near the upper part of
-        each theater block.
-        */
-
-        theaterTop =
-            fitted.firstCenter -
-            theaterHeight * 0.15;
-
-    } else {
-
-        /*
-        Fallback relative to detected sheet.
-        */
-
-        theaterTop =
-            sheet.top +
-            sheet.height * 0.055;
-
-
-        const theaterBottom =
-            sheet.top +
-            sheet.height * 0.975;
-
-
-        theaterHeight =
-            (
-                theaterBottom -
-                theaterTop
-            ) / 8;
-    }
-
-
-    return {
-
-        sheet,
-
-        columnEdges,
-
-        theaterTop,
-
-        theaterHeight
-    };
-}
-
-
-/*
-=========================================================
-DETECT VERTICAL GRID LINES
-=========================================================
-*/
-
-function detectVerticalGridLines(
-    image,
-    sheet
-) {
+function createAnalysisCanvas(image) {
 
     const canvas =
         document.createElement(
@@ -1167,568 +613,1265 @@ function detectVerticalGridLines(
     );
 
 
-    const data =
+    const imageData =
         ctx.getImageData(
             0,
             0,
             canvas.width,
             canvas.height
-        ).data;
-
-
-    const yStart =
-        Math.max(
-            0,
-            Math.floor(
-                sheet.top +
-                sheet.height * 0.07
-            )
         );
-
-
-    const yEnd =
-        Math.min(
-            image.height - 1,
-            Math.ceil(
-                sheet.bottom -
-                sheet.height * 0.02
-            )
-        );
-
-
-    const scores = [];
-
-
-    for (
-        let x =
-            Math.floor(sheet.left);
-        x <=
-            Math.ceil(sheet.right);
-        x++
-    ) {
-
-        let darkPixels = 0;
-
-
-        for (
-            let y = yStart;
-            y <= yEnd;
-            y += 2
-        ) {
-
-            const index =
-                (
-                    y *
-                    image.width +
-                    x
-                ) * 4;
-
-
-            const brightness =
-                (
-                    data[index] +
-                    data[index + 1] +
-                    data[index + 2]
-                ) / 3;
-
-
-            if (
-                brightness < 70
-            ) {
-
-                darkPixels++;
-            }
-        }
-
-
-        scores.push({
-            x,
-            score:
-                darkPixels
-        });
-    }
-
-
-    const heightSamples =
-        (
-            yEnd -
-            yStart
-        ) / 2;
-
-
-    const threshold =
-        heightSamples * 0.34;
-
-
-    const candidates =
-        scores.filter(
-            point =>
-                point.score >
-                threshold
-        );
-
-
-    return clusterLines(
-        candidates
-            .map(
-                item =>
-                    item.x
-            )
-    );
-}
-
-
-/*
-=========================================================
-CLUSTER NEARBY GRID PIXELS INTO ONE LINE
-=========================================================
-*/
-
-function clusterLines(values) {
-
-    if (!values.length) {
-        return [];
-    }
-
-
-    values.sort(
-        (a, b) =>
-            a - b
-    );
-
-
-    const clusters = [];
-
-    let cluster = [
-        values[0]
-    ];
-
-
-    for (
-        let i = 1;
-        i < values.length;
-        i++
-    ) {
-
-        if (
-            values[i] -
-            values[i - 1] <= 4
-        ) {
-
-            cluster.push(
-                values[i]
-            );
-
-        } else {
-
-            clusters.push(
-                cluster
-            );
-
-            cluster = [
-                values[i]
-            ];
-        }
-    }
-
-
-    clusters.push(
-        cluster
-    );
-
-
-    return clusters.map(
-        values => {
-
-            return (
-                values.reduce(
-                    (sum, x) =>
-                        sum + x,
-                    0
-                ) /
-                values.length
-            );
-        }
-    );
-}
-
-
-/*
-=========================================================
-CHOOSE BEST 7 COLUMN LINES
-=========================================================
-*/
-
-function chooseBestSevenLines(
-    lines,
-    sheet
-) {
-
-    /*
-    Keep grid-looking lines within spreadsheet.
-    */
-
-    const valid =
-        lines.filter(
-            x =>
-                x >= sheet.left &&
-                x <= sheet.right
-        );
-
-
-    if (
-        valid.length === 7
-    ) {
-
-        return valid;
-    }
-
-
-    /*
-    Match detected lines to expected normalized
-    positions.
-    */
-
-    const expected = [
-        0,
-        0.154,
-        0.323,
-        0.492,
-        0.661,
-        0.830,
-        1
-    ];
-
-
-    return expected.map(
-        ratio => {
-
-            const target =
-                sheet.left +
-                sheet.width *
-                ratio;
-
-
-            let closest =
-                target;
-
-            let distance =
-                Infinity;
-
-
-            valid.forEach(
-                candidate => {
-
-                    const d =
-                        Math.abs(
-                            candidate -
-                            target
-                        );
-
-
-                    if (
-                        d < distance
-                    ) {
-
-                        distance = d;
-                        closest = candidate;
-                    }
-                }
-            );
-
-
-            /*
-            Only trust a detected line if reasonably
-            close to where a column should exist.
-            */
-
-            if (
-                distance <
-                sheet.width * 0.04
-            ) {
-
-                return closest;
-            }
-
-
-            return target;
-        }
-    );
-}
-
-
-/*
-=========================================================
-FIND THEATER LABELS
-=========================================================
-*/
-
-function findTheaterPositions(
-    words
-) {
-
-    const found = [];
-
-
-    words.forEach(
-        (word, index) => {
-
-            const cleaned =
-                word.text
-                    .replace(
-                        /[^A-Za-z0-9]/g,
-                        ""
-                    );
-
-
-            /*
-            Example:
-            Theater3
-            */
-
-            let match =
-                cleaned.match(
-                    /^Theater([1-8])$/i
-                );
-
-
-            if (match) {
-
-                found.push({
-
-                    theater:
-                        Number(
-                            match[1]
-                        ),
-
-                    y:
-                        word.centerY
-                });
-
-                return;
-            }
-
-
-            /*
-            Example:
-            Theater 3
-            */
-
-            if (
-                /^Theater$/i.test(
-                    cleaned
-                )
-            ) {
-
-                const nearby =
-                    words.find(
-                        other => {
-
-                            const number =
-                                other.text
-                                    .replace(
-                                        /\D/g,
-                                        ""
-                                    );
-
-
-                            return (
-
-                                /^[1-8]$/.test(
-                                    number
-                                ) &&
-
-                                Math.abs(
-                                    other.centerY -
-                                    word.centerY
-                                ) < 12 &&
-
-                                other.centerX >
-                                    word.centerX &&
-
-                                other.centerX -
-                                    word.centerX <
-                                    120
-                            );
-                        }
-                    );
-
-
-                if (nearby) {
-
-                    found.push({
-
-                        theater:
-                            Number(
-                                nearby.text
-                                    .replace(
-                                        /\D/g,
-                                        ""
-                                    )
-                            ),
-
-                        y:
-                            (
-                                word.centerY +
-                                nearby.centerY
-                            ) / 2
-                    });
-                }
-            }
-        }
-    );
-
-
-    /*
-    Remove duplicates.
-    */
-
-    const best =
-        new Map();
-
-
-    found.forEach(
-        item => {
-
-            if (
-                !best.has(
-                    item.theater
-                )
-            ) {
-
-                best.set(
-                    item.theater,
-                    item
-                );
-            }
-        }
-    );
-
-
-    return [
-        ...best.values()
-    ].sort(
-        (a, b) =>
-            a.theater -
-            b.theater
-    );
-}
-
-
-/*
-=========================================================
-FIT THEATER SPACING
-=========================================================
-*/
-
-function fitTheaterPositions(
-    positions
-) {
-
-    /*
-    Linear regression:
-
-    y = intercept + spacing * (theater - 1)
-    */
-
-    const points =
-        positions.map(
-            item => ({
-                x:
-                    item.theater - 1,
-                y:
-                    item.y
-            })
-        );
-
-
-    const n =
-        points.length;
-
-
-    const sumX =
-        points.reduce(
-            (sum, p) =>
-                sum + p.x,
-            0
-        );
-
-
-    const sumY =
-        points.reduce(
-            (sum, p) =>
-                sum + p.y,
-            0
-        );
-
-
-    const sumXY =
-        points.reduce(
-            (sum, p) =>
-                sum +
-                p.x * p.y,
-            0
-        );
-
-
-    const sumXX =
-        points.reduce(
-            (sum, p) =>
-                sum +
-                p.x * p.x,
-            0
-        );
-
-
-    const denominator =
-        (
-            n * sumXX -
-            sumX * sumX
-        );
-
-
-    const spacing =
-        denominator !== 0
-            ?
-            (
-                n * sumXY -
-                sumX * sumY
-            ) /
-            denominator
-            :
-            100;
-
-
-    const intercept =
-        (
-            sumY -
-            spacing *
-            sumX
-        ) / n;
 
 
     return {
 
-        firstCenter:
-            intercept,
+        canvas,
 
-        spacing
+        ctx,
+
+        data:
+            imageData.data,
+
+        width:
+            canvas.width,
+
+        height:
+            canvas.height
+
     };
+
 }
 
 
-/*
-=========================================================
-PARSE ENTIRE LINEUP
-=========================================================
-*/
+/* =========================================================
+   PIXEL BRIGHTNESS
+========================================================= */
 
-function parseLineup(
-    words,
-    layout
+function brightnessAt(
+    analysis,
+    x,
+    y
 ) {
 
-    const showings = [];
+    x =
+        Math.max(
+            0,
+            Math.min(
+                analysis.width - 1,
+                Math.round(x)
+            )
+        );
+
+
+    y =
+        Math.max(
+            0,
+            Math.min(
+                analysis.height - 1,
+                Math.round(y)
+            )
+        );
+
+
+    const index =
+        (
+            y *
+            analysis.width +
+            x
+        ) * 4;
+
+
+    return (
+        analysis.data[index] +
+        analysis.data[index + 1] +
+        analysis.data[index + 2]
+    ) / 3;
+
+}
+
+
+/* =========================================================
+   DETECT VERTICAL SHOWING COLUMN LINES
+
+   We are looking for:
+
+   | B | C | D | E | F |
+
+   Therefore we need SIX vertical edges.
+
+   These lines run through nearly the entire theater grid.
+========================================================= */
+
+function detectShowingColumns(
+    analysis
+) {
+
+    const candidates = [];
+
+
+    /*
+    Ignore top/bottom portions of screenshot when
+    measuring continuous vertical lines.
+    */
+
+    const yStart =
+        Math.floor(
+            analysis.height *
+            0.05
+        );
+
+
+    const yEnd =
+        Math.ceil(
+            analysis.height *
+            0.98
+        );
+
+
+    const sampleCount =
+        Math.max(
+            1,
+            Math.floor(
+                (
+                    yEnd -
+                    yStart
+                ) / 2
+            )
+        );
+
+
+    for (
+        let x = 0;
+        x < analysis.width;
+        x++
+    ) {
+
+        let dark =
+            0;
+
+
+        for (
+            let y = yStart;
+            y < yEnd;
+            y += 2
+        ) {
+
+            if (
+                brightnessAt(
+                    analysis,
+                    x,
+                    y
+                ) < 65
+            ) {
+
+                dark++;
+
+            }
+
+        }
+
+
+        const ratio =
+            dark /
+            sampleCount;
+
+
+        /*
+        Spreadsheet vertical lines run almost all
+        the way down the page.
+        */
+
+        if (
+            ratio > 0.68
+        ) {
+
+            candidates.push(
+                x
+            );
+
+        }
+
+    }
+
+
+    let lines =
+        clusterPositions(
+            candidates,
+            5
+        );
+
+
+    /*
+    Remove screenshot borders / black margins.
+
+    We want actual spreadsheet column lines,
+    not x=0 or a browser-image border.
+    */
+
+    lines =
+        lines.filter(
+            x =>
+
+                x >
+                    analysis.width *
+                    0.05 &&
+
+                x <
+                    analysis.width *
+                    0.995
+
+        );
+
+
+    /*
+    There may be more than 6 vertical lines.
+
+    Find the group of 6 with approximately equal
+    spacing, because columns B-F are consistently
+    sized.
+    */
+
+    return findBestColumnSet(
+        lines
+    );
+
+}
+
+
+/* =========================================================
+   FIND BEST 6 COLUMN EDGES
+========================================================= */
+
+function findBestColumnSet(
+    lines
+) {
+
+    if (
+        lines.length <
+        6
+    ) {
+
+        return [];
+
+    }
+
+
+    let best =
+        null;
+
+    let bestScore =
+        Infinity;
+
+
+    for (
+        let start = 0;
+        start <=
+            lines.length - 6;
+        start++
+    ) {
+
+        const set =
+            lines.slice(
+                start,
+                start + 6
+            );
+
+
+        const gaps = [];
+
+
+        for (
+            let i = 0;
+            i < 5;
+            i++
+        ) {
+
+            gaps.push(
+                set[i + 1] -
+                set[i]
+            );
+
+        }
+
+
+        const average =
+            gaps.reduce(
+                (sum, value) =>
+                    sum + value,
+                0
+            ) /
+            gaps.length;
+
+
+        if (
+            average <= 0
+        ) {
+
+            continue;
+
+        }
+
+
+        const variance =
+            gaps.reduce(
+                (sum, value) => {
+
+                    const difference =
+                        value -
+                        average;
+
+
+                    return (
+                        sum +
+                        difference *
+                        difference
+                    );
+
+                },
+                0
+            ) /
+            gaps.length;
+
+
+        const coefficient =
+            Math.sqrt(
+                variance
+            ) /
+            average;
+
+
+        /*
+        The showing columns don't have to be
+        perfectly identical, just reasonably close.
+        */
+
+        if (
+            coefficient <
+            bestScore
+        ) {
+
+            bestScore =
+                coefficient;
+
+            best =
+                set;
+
+        }
+
+    }
+
+
+    if (
+        !best ||
+        bestScore >
+            0.15
+    ) {
+
+        return [];
+
+    }
+
+
+    return best;
+
+}
+
+
+/* =========================================================
+   DETECT HORIZONTAL THEATER GRID
+
+   Each theater contributes 5 row heights:
+
+   Movie
+   Time
+   Server 1
+   Server 2
+   Server 3
+
+   Across 8 theaters that produces:
+
+   41 boundary lines
+
+   because neighboring theaters share one boundary.
+========================================================= */
+
+function detectTheaterGrid(
+    analysis,
+    left,
+    right
+) {
+
+    const candidates =
+        [];
+
+
+    const xStart =
+        Math.max(
+            0,
+            Math.floor(
+                left + 2
+            )
+        );
+
+
+    const xEnd =
+        Math.min(
+            analysis.width - 1,
+            Math.ceil(
+                right - 2
+            )
+        );
+
+
+    const sampleWidth =
+        Math.max(
+            1,
+            Math.floor(
+                (
+                    xEnd -
+                    xStart
+                ) / 2
+            )
+        );
+
+
+    for (
+        let y = 0;
+        y < analysis.height;
+        y++
+    ) {
+
+        let dark =
+            0;
+
+
+        for (
+            let x = xStart;
+            x <= xEnd;
+            x += 2
+        ) {
+
+            if (
+                brightnessAt(
+                    analysis,
+                    x,
+                    y
+                ) < 75
+            ) {
+
+                dark++;
+
+            }
+
+        }
+
+
+        const ratio =
+            dark /
+            sampleWidth;
+
+
+        /*
+        Real horizontal spreadsheet borders cross
+        almost all five showing columns.
+        */
+
+        if (
+            ratio > 0.60
+        ) {
+
+            candidates.push(
+                y
+            );
+
+        }
+
+    }
+
+
+    let lines =
+        clusterPositions(
+            candidates,
+            4
+        );
+
+
+    /*
+    Ignore screenshot top/bottom borders.
+    */
+
+    lines =
+        lines.filter(
+            y =>
+
+                y >
+                    analysis.height *
+                    0.025 &&
+
+                y <
+                    analysis.height *
+                    0.985
+
+        );
+
+
+    return findBestTheaterGrid(
+        lines
+    );
+
+}
+
+
+/* =========================================================
+   FIND THE REPEATING 41-LINE THEATER GRID
+========================================================= */
+
+function findBestTheaterGrid(
+    lines
+) {
+
+    if (
+        lines.length <
+        41
+    ) {
+
+        return [];
+
+    }
+
+
+    let bestSet =
+        null;
+
+    let bestScore =
+        Infinity;
+
+
+    for (
+        let start = 0;
+        start <=
+            lines.length - 41;
+        start++
+    ) {
+
+        const set =
+            lines.slice(
+                start,
+                start + 41
+            );
+
+
+        const gaps =
+            [];
+
+
+        let valid =
+            true;
+
+
+        for (
+            let i = 0;
+            i < 40;
+            i++
+        ) {
+
+            const gap =
+                set[i + 1] -
+                set[i];
+
+
+            /*
+            Reject bizarre gaps.
+            */
+
+            if (
+                gap <= 0
+            ) {
+
+                valid =
+                    false;
+
+                break;
+
+            }
+
+
+            gaps.push(
+                gap
+            );
+
+        }
+
+
+        if (!valid) {
+            continue;
+        }
+
+
+        /*
+        Every theater follows:
+
+        large movie row
+        short time row
+        short server row
+        short server row
+        short server row
+
+        Repeated 8 times.
+        */
+
+
+        const movieGaps =
+            [];
+
+        const smallGaps =
+            [];
+
+
+        gaps.forEach(
+            (
+                gap,
+                index
+            ) => {
+
+                if (
+                    index % 5 === 0
+                ) {
+
+                    movieGaps.push(
+                        gap
+                    );
+
+                }
+
+                else {
+
+                    smallGaps.push(
+                        gap
+                    );
+
+                }
+
+            }
+        );
+
+
+        const movieMedian =
+            median(
+                movieGaps
+            );
+
+
+        const smallMedian =
+            median(
+                smallGaps
+            );
+
+
+        if (
+            smallMedian <= 0
+        ) {
+
+            continue;
+
+        }
+
+
+        /*
+        Movie-title row should be substantially taller.
+        */
+
+        if (
+            movieMedian <
+            smallMedian *
+            1.35
+        ) {
+
+            continue;
+
+        }
+
+
+        let score =
+            0;
+
+
+        movieGaps.forEach(
+            gap => {
+
+                score +=
+                    Math.abs(
+                        gap -
+                        movieMedian
+                    ) /
+                    movieMedian;
+
+            }
+        );
+
+
+        smallGaps.forEach(
+            gap => {
+
+                score +=
+                    Math.abs(
+                        gap -
+                        smallMedian
+                    ) /
+                    smallMedian;
+
+            }
+        );
+
+
+        if (
+            score <
+            bestScore
+        ) {
+
+            bestScore =
+                score;
+
+            bestSet =
+                set;
+
+        }
+
+    }
+
+
+    return (
+        bestSet ||
+        []
+    );
+
+}
+
+
+/* =========================================================
+   CLUSTER NEARBY BLACK PIXELS INTO SINGLE LINES
+
+   A 2-pixel-thick border shouldn't be treated as two
+   separate grid lines.
+========================================================= */
+
+function clusterPositions(
+    values,
+    maximumGap
+) {
+
+    if (
+        !values.length
+    ) {
+
+        return [];
+
+    }
+
+
+    const sorted =
+        [...values]
+            .sort(
+                (a, b) =>
+                    a - b
+            );
+
+
+    const clusters =
+        [];
+
+
+    let current =
+        [
+            sorted[0]
+        ];
+
+
+    for (
+        let i = 1;
+        i < sorted.length;
+        i++
+    ) {
+
+        if (
+            sorted[i] -
+            sorted[i - 1] <=
+            maximumGap
+        ) {
+
+            current.push(
+                sorted[i]
+            );
+
+        }
+
+        else {
+
+            clusters.push(
+                current
+            );
+
+
+            current =
+                [
+                    sorted[i]
+                ];
+
+        }
+
+    }
+
+
+    clusters.push(
+        current
+    );
+
+
+    return clusters.map(
+        cluster =>
+
+            cluster.reduce(
+                (sum, value) =>
+                    sum + value,
+                0
+            ) /
+            cluster.length
+
+    );
+
+}
+
+
+/* =========================================================
+   MEDIAN
+========================================================= */
+
+function median(values) {
+
+    if (
+        !values.length
+    ) {
+
+        return 0;
+
+    }
+
+
+    const sorted =
+        [...values]
+            .sort(
+                (a, b) =>
+                    a - b
+            );
+
+
+    const middle =
+        Math.floor(
+            sorted.length / 2
+        );
+
+
+    if (
+        sorted.length % 2
+    ) {
+
+        return sorted[
+            middle
+        ];
+
+    }
+
+
+    return (
+        sorted[
+            middle - 1
+        ] +
+        sorted[
+            middle
+        ]
+    ) / 2;
+
+}
+
+
+/* =========================================================
+   OCR PREPROCESSING
+========================================================= */
+
+function preprocessForOCR(
+    image
+) {
+
+    const scale =
+        2;
+
+
+    const canvas =
+        document.createElement(
+            "canvas"
+        );
+
+
+    canvas.width =
+        image.width *
+        scale;
+
+
+    canvas.height =
+        image.height *
+        scale;
+
+
+    const ctx =
+        canvas.getContext(
+            "2d",
+            {
+                willReadFrequently: true
+            }
+        );
+
+
+    ctx.imageSmoothingEnabled =
+        false;
+
+
+    ctx.drawImage(
+        image,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+
+    const imageData =
+        ctx.getImageData(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+
+    const pixels =
+        imageData.data;
+
+
+    for (
+        let i = 0;
+        i < pixels.length;
+        i += 4
+    ) {
+
+        const r =
+            pixels[i];
+
+        const g =
+            pixels[i + 1];
+
+        const b =
+            pixels[i + 2];
+
+
+        const gray =
+            (
+                0.299 *
+                    r +
+                0.587 *
+                    g +
+                0.114 *
+                    b
+            );
+
+
+        /*
+        Preserve text while turning gray spreadsheet
+        backgrounds white.
+        */
+
+        const value =
+            gray <
+            180
+                ? 0
+                : 255;
+
+
+        pixels[i] =
+            value;
+
+        pixels[i + 1] =
+            value;
+
+        pixels[i + 2] =
+            value;
+
+    }
+
+
+    ctx.putImageData(
+        imageData,
+        0,
+        0
+    );
+
+
+    return {
+
+        canvas,
+
+        scale
+
+    };
+
+}
+
+
+/* =========================================================
+   PARSE TESSERACT TSV
+========================================================= */
+
+function parseTSV(
+    tsv,
+    scale
+) {
+
+    if (!tsv) {
+        return [];
+    }
+
+
+    const lines =
+        tsv
+            .trim()
+            .split("\n");
+
+
+    if (
+        lines.length <
+        2
+    ) {
+
+        return [];
+
+    }
+
+
+    const headers =
+        lines[0]
+            .split("\t");
+
+
+    const index =
+        {};
+
+
+    headers.forEach(
+        (
+            field,
+            i
+        ) => {
+
+            index[field] =
+                i;
+
+        }
+    );
+
+
+    const words =
+        [];
+
+
+    for (
+        let i = 1;
+        i < lines.length;
+        i++
+    ) {
+
+        const values =
+            lines[i]
+                .split("\t");
+
+
+        const text =
+            (
+                values[
+                    index.text
+                ] ||
+                ""
+            ).trim();
+
+
+        if (!text) {
+            continue;
+        }
+
+
+        const confidence =
+            Number(
+                values[
+                    index.conf
+                ]
+            );
+
+
+        if (
+            Number.isFinite(
+                confidence
+            ) &&
+            confidence < 10
+        ) {
+
+            continue;
+
+        }
+
+
+        const left =
+            Number(
+                values[
+                    index.left
+                ]
+            ) /
+            scale;
+
+
+        const top =
+            Number(
+                values[
+                    index.top
+                ]
+            ) /
+            scale;
+
+
+        const width =
+            Number(
+                values[
+                    index.width
+                ]
+            ) /
+            scale;
+
+
+        const height =
+            Number(
+                values[
+                    index.height
+                ]
+            ) /
+            scale;
+
+
+        if (
+            !Number.isFinite(
+                left
+            ) ||
+            !Number.isFinite(
+                top
+            ) ||
+            !Number.isFinite(
+                width
+            ) ||
+            !Number.isFinite(
+                height
+            )
+        ) {
+
+            continue;
+
+        }
+
+
+        words.push({
+
+            text,
+
+            confidence,
+
+            left,
+
+            top,
+
+            width,
+
+            height,
+
+            centerX:
+                left +
+                width / 2,
+
+            centerY:
+                top +
+                height / 2
+
+        });
+
+    }
+
+
+    return words;
+
+}
+
+
+/* =========================================================
+   PARSE THE DETECTED GRID
+
+   41 horizontal lines means:
+
+   Theater 1 = lines 0..5
+   Theater 2 = lines 5..10
+   Theater 3 = lines 10..15
+   etc.
+========================================================= */
+
+function parseDetectedGrid(
+    words,
+    columns,
+    rows
+) {
+
+    const result =
+        [];
+
+
+    /*
+    Approximate width of theater-label column A.
+
+    We infer it from the showing columns, rather than
+    using a fixed coordinate.
+    */
+
+    const columnWidths =
+        [];
+
+
+    for (
+        let i = 0;
+        i < 5;
+        i++
+    ) {
+
+        columnWidths.push(
+            columns[i + 1] -
+            columns[i]
+        );
+
+    }
+
+
+    const showingColumnWidth =
+        median(
+            columnWidths
+        );
+
+
+    const labelLeft =
+        Math.max(
+            0,
+            columns[0] -
+            showingColumnWidth
+        );
 
 
     for (
@@ -1737,115 +1880,174 @@ function parseLineup(
         theater++
     ) {
 
-        const bandTop =
-            layout.theaterTop +
+        const base =
             (
                 theater - 1
-            ) *
-            layout.theaterHeight;
-
-
-        const bandBottom =
-            bandTop +
-            layout.theaterHeight;
+            ) * 5;
 
 
         /*
-        Approximate row boundaries inside theater.
-
-        These are RELATIVE fractions, not pixels.
-
-        Row 0: movie
-        Row 1: time
-        Row 2: server 1
-        Row 3: server 2
-        Row 4: server 3
+        Actual detected rows:
         */
 
-        const rowEdges = [
+        const movieTop =
+            rows[base];
 
-            bandTop,
+        const movieBottom =
+            rows[base + 1];
 
-            bandTop +
-            layout.theaterHeight * 0.30,
 
-            bandTop +
-            layout.theaterHeight * 0.47,
+        const timeTop =
+            rows[base + 1];
 
-            bandTop +
-            layout.theaterHeight * 0.64,
+        const timeBottom =
+            rows[base + 2];
 
-            bandTop +
-            layout.theaterHeight * 0.81,
 
-            bandBottom
+        const server1Top =
+            rows[base + 2];
 
-        ];
+        const server1Bottom =
+            rows[base + 3];
+
+
+        const server2Top =
+            rows[base + 3];
+
+        const server2Bottom =
+            rows[base + 4];
+
+
+        const server3Top =
+            rows[base + 4];
+
+        const server3Bottom =
+            rows[base + 5];
+
+
+        const serverRows =
+            [
+                [
+                    server1Top,
+                    server1Bottom
+                ],
+
+                [
+                    server2Top,
+                    server2Bottom
+                ],
+
+                [
+                    server3Top,
+                    server3Bottom
+                ]
+            ];
 
 
         /*
-        First read the theater's row rules.
+        Read authoritative row labels from column A.
         */
 
-        const theaterRules =
-            readTheaterRules(
-                theater,
-                words,
-                layout.columnEdges[0],
-                layout.columnEdges[1],
-                rowEdges
+        const rules =
+            [];
+
+
+        for (
+            let rowIndex = 0;
+            rowIndex < 3;
+            rowIndex++
+        ) {
+
+            const label =
+                textInsideCell(
+                    words,
+
+                    labelLeft,
+
+                    serverRows[
+                        rowIndex
+                    ][0],
+
+                    columns[0],
+
+                    serverRows[
+                        rowIndex
+                    ][1]
+                );
+
+
+            const parsed =
+                parseRowAssignment(
+                    label,
+                    rowIndex
+                );
+
+
+            rules.push(
+                parsed ||
+                {
+                    ...fallbackRows[
+                        theater
+                    ][
+                        rowIndex
+                    ]
+                }
             );
 
+        }
+
 
         /*
-        Columns 1-5 are movie/showing columns.
+        Five possible showing columns.
         */
 
         for (
-            let column = 1;
-            column <= 5;
+            let column = 0;
+            column < 5;
             column++
         ) {
 
             const left =
-                layout.columnEdges[
+                columns[
                     column
                 ];
 
             const right =
-                layout.columnEdges[
+                columns[
                     column + 1
                 ];
 
 
-            const movieText =
-                wordsInBox(
+            const movieRaw =
+                textInsideCell(
                     words,
                     left,
-                    rowEdges[0],
+                    movieTop,
                     right,
-                    rowEdges[1]
+                    movieBottom
                 );
 
 
-            const timeText =
-                wordsInBox(
+            const timeRaw =
+                textInsideCell(
                     words,
                     left,
-                    rowEdges[1],
+                    timeTop,
                     right,
-                    rowEdges[2]
+                    timeBottom
                 );
 
 
             const parsedTime =
                 parseShowtime(
-                    timeText
+                    timeRaw
                 );
 
 
             /*
-            No valid time = no showing in this cell.
+            If the time cell isn't a recognizable
+            showtime, this is probably a blank showing
+            cell.
             */
 
             if (
@@ -1853,39 +2055,41 @@ function parseLineup(
             ) {
 
                 continue;
+
             }
 
 
-            const servers = [];
+            const servers =
+                [];
 
 
             for (
-                let serverRow = 0;
-                serverRow < 3;
-                serverRow++
+                let serverIndex = 0;
+                serverIndex < 3;
+                serverIndex++
             ) {
 
-                const rawName =
-                    wordsInBox(
+                const raw =
+                    textInsideCell(
                         words,
 
                         left,
 
-                        rowEdges[
-                            serverRow + 2
-                        ],
+                        serverRows[
+                            serverIndex
+                        ][0],
 
                         right,
 
-                        rowEdges[
-                            serverRow + 3
-                        ]
+                        serverRows[
+                            serverIndex
+                        ][1]
                     );
 
 
                 const name =
                     cleanServerName(
-                        rawName
+                        raw
                     );
 
 
@@ -1899,26 +2103,35 @@ function parseLineup(
                     name,
 
                     position:
-                        serverRow + 1,
+                        serverIndex +
+                        1,
 
                     /*
-                    Third physical server row is the
-                    parenthetical/conditional position.
+                    The third spreadsheet server row is
+                    the parenthetical conditional server.
                     */
 
                     conditional:
-                        serverRow === 2
+                        serverIndex === 2,
+
+                    rows:
+                        "",
+
+                    over50:
+                        ""
+
                 });
+
             }
 
 
-            showings.push({
+            result.push({
 
                 theater,
 
                 movie:
                     cleanMovieTitle(
-                        movieText
+                        movieRaw
                     ),
 
                 start:
@@ -1933,137 +2146,166 @@ function parseLineup(
                 endMinutes:
                     parsedTime.endMinutes,
 
-                rules:
-                    theaterRules,
+                servers,
 
-                servers
+                rules
+
             });
+
         }
+
     }
 
 
-    return showings;
+    return result;
+
 }
 
 
-/*
-=========================================================
-READ ROW RULES FROM LEFT SIDE
+/* =========================================================
+   TEXT INSIDE A DETECTED CELL
+========================================================= */
 
-Example:
-
-ACEG (ADG)
-BDFH (BEH)
-(CF)
-=========================================================
-*/
-
-function readTheaterRules(
-    theater,
+function textInsideCell(
     words,
     left,
+    top,
     right,
-    rowEdges
+    bottom
 ) {
 
-    const rules = [];
+    const width =
+        right -
+        left;
 
 
-    for (
-        let row = 0;
-        row < 3;
-        row++
-    ) {
+    const height =
+        bottom -
+        top;
 
-        const text =
-            wordsInBox(
-                words,
 
-                left,
+    /*
+    Slight inset avoids capturing border artifacts.
+    */
 
-                rowEdges[
-                    row + 2
-                ],
+    const insetX =
+        Math.max(
+            1,
+            width *
+            0.015
+        );
 
-                right,
 
-                rowEdges[
-                    row + 3
-                ]
+    const insetY =
+        Math.max(
+            1,
+            height *
+            0.05
+        );
+
+
+    const matches =
+        words.filter(
+            word =>
+
+                word.centerX >
+                    left +
+                    insetX &&
+
+                word.centerX <
+                    right -
+                    insetX &&
+
+                word.centerY >
+                    top +
+                    insetY &&
+
+                word.centerY <
+                    bottom -
+                    insetY
+
+        );
+
+
+    matches.sort(
+        (
+            a,
+            b
+        ) => {
+
+            const yDifference =
+                a.centerY -
+                b.centerY;
+
+
+            if (
+                Math.abs(
+                    yDifference
+                ) > 5
+            ) {
+
+                return yDifference;
+
+            }
+
+
+            return (
+                a.left -
+                b.left
             );
 
-
-        const parsed =
-            parseRowRule(
-                text,
-                row
-            );
-
-
-        if (parsed) {
-
-            rules.push(
-                parsed
-            );
-
-        } else {
-
-            rules.push({
-                ...fallbackRows[
-                    theater
-                ][row]
-            });
         }
-    }
+    );
 
 
-    return rules;
+    return matches
+        .map(
+            word =>
+                word.text
+        )
+        .join(" ")
+        .trim();
+
 }
 
 
-/*
-=========================================================
-PARSE A ROW LABEL
-=========================================================
-*/
+/* =========================================================
+   PARSE THEATER ROW LABEL
 
-function parseRowRule(
-    text,
+   Examples:
+
+   ACEG (ADG)
+   BDFH (BEH)
+   (CF)
+========================================================= */
+
+function parseRowAssignment(
+    value,
     rowIndex
 ) {
 
-    if (!text) {
+    if (!value) {
         return null;
     }
 
 
-    const cleaned =
-        text
+    let cleaned =
+        value
             .toUpperCase()
             .replace(
-                /[^A-H() ]/g,
-                " "
-            )
-            .replace(
-                /\s+/g,
-                " "
-            )
-            .trim();
+                /[^A-H()]/g,
+                ""
+            );
 
 
-    /*
-    Capture letter groups such as:
+    if (!cleaned) {
+        return null;
+    }
 
-    ACEG
-    ADG
-    BDFH
-    BEH
-    CF
-    */
 
     const groups =
         cleaned.match(
-            /[A-H]{1,6}/g
+            /[A-H]+/g
         );
 
 
@@ -2073,11 +2315,15 @@ function parseRowRule(
     ) {
 
         return null;
+
     }
 
 
     /*
-    Third assignment row is inherently conditional.
+    Third row:
+    (CF)
+
+    Same letters are used when activated.
     */
 
     if (
@@ -2091,7 +2337,9 @@ function parseRowRule(
 
             over50:
                 groups[0]
+
         };
+
     }
 
 
@@ -2103,24 +2351,19 @@ function parseRowRule(
         over50:
             groups[1] ||
             groups[0]
+
     };
+
 }
 
 
-/*
-=========================================================
-APPLY STAR CINEMA SERVER RULES
-=========================================================
-*/
+/* =========================================================
+   APPLY STAR CINEMA ASSIGNMENT RULES
+========================================================= */
 
-function applyServerRules(
+function applyAssignmentRules(
     showing
 ) {
-
-    /*
-    Server positions 1 and 2 are normal servers.
-    Position 3 is conditional / parenthetical.
-    */
 
     const normalServers =
         showing.servers.filter(
@@ -2137,11 +2380,13 @@ function applyServerRules(
 
 
     /*
-    =====================================================
+    ========================================================
     ONE NORMAL SERVER
 
-    They are responsible for the entire theater.
-    =====================================================
+    One server means the ENTIRE theater.
+
+    Their physical spreadsheet row does NOT matter.
+    ========================================================
     */
 
     if (
@@ -2157,8 +2402,8 @@ function applyServerRules(
 
 
         /*
-        No conditional helper:
-        server stays responsible for whole theater.
+        If nobody conditional is listed, they keep
+        the entire theater regardless of occupancy.
         */
 
         if (
@@ -2167,26 +2412,27 @@ function applyServerRules(
 
             server.over50 =
                 "ALL ROWS";
+
         }
-
-
-        /*
-        If there IS a conditional third server,
-        that third server joins over 50.
-
-        The original server keeps all rows except
-        the conditional server's row group.
-        */
 
         else {
 
+            /*
+            If a parenthetical third server joins over 50,
+            the original server keeps the over-50 portions
+            assigned to the first two server groups.
+            */
+
             const first =
                 showing.rules[0]
-                    ?.over50 || "";
+                    ?.over50 ||
+                "";
+
 
             const second =
                 showing.rules[1]
-                    ?.over50 || "";
+                    ?.over50 ||
+                "";
 
 
             server.over50 =
@@ -2194,16 +2440,18 @@ function applyServerRules(
                     first,
                     second
                 );
+
         }
+
     }
 
 
     /*
-    =====================================================
+    ========================================================
     TWO NORMAL SERVERS
 
-    Use physical assignment row.
-    =====================================================
+    Their physical first/second assignment position matters.
+    ========================================================
     */
 
     else if (
@@ -2213,16 +2461,17 @@ function applyServerRules(
         normalServers.forEach(
             server => {
 
-                const index =
+                const ruleIndex =
                     Math.min(
-                        server.position - 1,
+                        server.position -
+                        1,
                         1
                     );
 
 
                 const rule =
                     showing.rules[
-                        index
+                        ruleIndex
                     ];
 
 
@@ -2234,17 +2483,19 @@ function applyServerRules(
                 server.over50 =
                     rule?.over50 ||
                     server.rows;
+
             }
         );
+
     }
 
 
     /*
-    =====================================================
-    CONDITIONAL THIRD SERVER
+    ========================================================
+    THIRD / PARENTHETICAL SERVER
 
-    Only joins when occupancy > 50.
-    =====================================================
+    Only joins when occupancy goes above 50.
+    ========================================================
     */
 
     conditionalServers.forEach(
@@ -2262,19 +2513,16 @@ function applyServerRules(
 
             server.over50 =
                 server.rows;
+
         }
     );
+
 }
 
 
-/*
-=========================================================
-COMBINE ROW LETTERS
-
-Example:
-ADG + BEH -> ABDEGH
-=========================================================
-*/
+/* =========================================================
+   COMBINE ROWS
+========================================================= */
 
 function combineRows(
     first,
@@ -2286,11 +2534,12 @@ function combineRows(
             first +
             second
         )
+            .toUpperCase()
             .split("")
             .filter(
-                char =>
+                character =>
                     /[A-H]/.test(
-                        char
+                        character
                     )
             );
 
@@ -2302,123 +2551,25 @@ function combineRows(
     ]
         .sort()
         .join("");
+
 }
 
 
-/*
-=========================================================
-WORDS INSIDE A BOX
-=========================================================
-*/
-
-function wordsInBox(
-    words,
-    left,
-    top,
-    right,
-    bottom
-) {
-
-    /*
-    Slight inset keeps neighboring cell borders from
-    causing as many OCR overlaps.
-    */
-
-    const insetX =
-        Math.max(
-            1,
-            (
-                right -
-                left
-            ) * 0.015
-        );
-
-
-    const insetY =
-        Math.max(
-            1,
-            (
-                bottom -
-                top
-            ) * 0.03
-        );
-
-
-    const found =
-        words.filter(
-            word => {
-
-                return (
-
-                    word.centerX >=
-                        left + insetX &&
-
-                    word.centerX <=
-                        right - insetX &&
-
-                    word.centerY >=
-                        top + insetY &&
-
-                    word.centerY <=
-                        bottom - insetY
-                );
-            }
-        );
-
-
-    found.sort(
-        (a, b) => {
-
-            const yDifference =
-                a.centerY -
-                b.centerY;
-
-
-            if (
-                Math.abs(
-                    yDifference
-                ) > 6
-            ) {
-
-                return yDifference;
-            }
-
-
-            return (
-                a.left -
-                b.left
-            );
-        }
-    );
-
-
-    return found
-        .map(
-            word =>
-                word.text
-        )
-        .join(" ")
-        .trim();
-}
-
-
-/*
-=========================================================
-CLEAN SERVER NAME
-=========================================================
-*/
+/* =========================================================
+   CLEAN SERVER NAME
+========================================================= */
 
 function cleanServerName(
-    text
+    value
 ) {
 
-    if (!text) {
+    if (!value) {
         return "";
     }
 
 
     let cleaned =
-        text
+        value
             .replace(
                 /[()[\]{}|]/g,
                 ""
@@ -2435,16 +2586,19 @@ function cleanServerName(
 
 
     if (
-        cleaned.length < 2 ||
-        cleaned.length > 22
+        cleaned.length <
+        2 ||
+        cleaned.length >
+        24
     ) {
 
         return "";
+
     }
 
 
     /*
-    Reject row codes accidentally OCR'd as names.
+    Don't mistake assignment letters for names.
     */
 
     if (
@@ -2454,41 +2608,44 @@ function cleanServerName(
     ) {
 
         return "";
+
     }
 
 
-    const rejected = [
-
-        "SEATING",
-        "CAPACITY",
-        "THEATER",
-        "MOVIE"
-
-    ];
+    const forbidden =
+        [
+            "THEATER",
+            "SEATING",
+            "CAPACITY",
+            "TODAY",
+            "MOVIE"
+        ];
 
 
     if (
-        rejected.includes(
+        forbidden.includes(
             cleaned.toUpperCase()
         )
     ) {
 
         return "";
+
     }
 
 
     /*
-    A person's name shouldn't contain a large
-    number of words.
+    A server name should be short.
     */
 
     if (
         cleaned
             .split(" ")
-            .length > 3
+            .length >
+        3
     ) {
 
         return "";
+
     }
 
 
@@ -2504,27 +2661,27 @@ function cleanServerName(
                 word
                     .slice(1)
                     .toLowerCase()
+
         )
         .join(" ");
+
 }
 
 
-/*
-=========================================================
-CLEAN MOVIE TITLE
-=========================================================
-*/
+/* =========================================================
+   CLEAN MOVIE
+========================================================= */
 
 function cleanMovieTitle(
-    text
+    value
 ) {
 
-    if (!text) {
+    if (!value) {
         return "";
     }
 
 
-    return text
+    return value
         .replace(
             /[|_[\]{}]/g,
             " "
@@ -2533,31 +2690,26 @@ function cleanMovieTitle(
             /\s+/g,
             " "
         )
-        .replace(
-            /\d{1,2}[:;.]\d{2}.*$/i,
-            ""
-        )
         .trim();
+
 }
 
 
-/*
-=========================================================
-SHOWTIME PARSER
-=========================================================
-*/
+/* =========================================================
+   PARSE SHOWTIME
+========================================================= */
 
 function parseShowtime(
-    text
+    value
 ) {
 
-    if (!text) {
+    if (!value) {
         return null;
     }
 
 
-    let cleaned =
-        text
+    let text =
+        value
             .toLowerCase()
             .replace(
                 /\s+/g,
@@ -2574,20 +2726,24 @@ function parseShowtime(
 
 
     /*
-    Common OCR correction:
-    lowercase l often replaces 1.
+    Common OCR substitutions around digits.
     */
 
-    cleaned =
-        cleaned.replace(
-            /l(?=\d)/g,
-            "1"
-        );
+    text =
+        text
+            .replace(
+                /(?<=\d)o(?=\d)/g,
+                "0"
+            )
+            .replace(
+                /(?<=\d)l(?=\d)/g,
+                "1"
+            );
 
 
     const match =
-        cleaned.match(
-            /(\d{1,2}):(\d{2})([ap]m?)?-(\d{1,2}):(\d{2})([ap]m?)?/
+        text.match(
+            /(\d{1,2}):(\d{2})([ap](?:m)?)?-(\d{1,2}):(\d{2})([ap](?:m)?)?/
         );
 
 
@@ -2621,38 +2777,47 @@ function parseShowtime(
 
 
     if (
+        startHour <
+        1 ||
 
-        startHour < 1 ||
-        startHour > 12 ||
+        startHour >
+        12 ||
 
-        endHour < 1 ||
-        endHour > 12 ||
+        endHour <
+        1 ||
 
-        startMinute > 59 ||
-        endMinute > 59
+        endHour >
+        12 ||
 
+        startMinute >
+        59 ||
+
+        endMinute >
+        59
     ) {
 
         return null;
+
     }
 
 
     let startPeriod =
-        markerToPeriod(
+        periodFromMarker(
             match[3]
         );
 
 
     let endPeriod =
-        markerToPeriod(
+        periodFromMarker(
             match[6]
         );
 
 
     /*
-    Infer start period.
+    Infer start AM/PM from Star Cinema schedule.
 
-    Star Cinema day normally begins late morning.
+    10-11 = morning
+    12 onward through evening = PM
     */
 
     if (!startPeriod) {
@@ -2665,11 +2830,15 @@ function parseShowtime(
             startPeriod =
                 "AM";
 
-        } else {
+        }
+
+        else {
 
             startPeriod =
                 "PM";
+
         }
+
     }
 
 
@@ -2679,34 +2848,41 @@ function parseShowtime(
 
     if (!endPeriod) {
 
+        /*
+        Late evening show ending at 12/1/2
+        crosses midnight.
+        */
+
         if (
-
-            startPeriod === "PM" &&
-
+            startPeriod ===
+            "PM" &&
+            startHour >=
+            7 &&
             (
-                endHour === 12 ||
-
-                (
-                    startHour >= 7 &&
-                    endHour <= 2
-                )
+                endHour ===
+                12 ||
+                endHour <=
+                2
             )
-
         ) {
 
             endPeriod =
                 "AM";
 
-        } else {
+        }
+
+        else {
 
             endPeriod =
                 startPeriod;
+
         }
+
     }
 
 
     const startMinutes =
-        clockToMinutes(
+        clockMinutes(
             startHour,
             startMinute,
             startPeriod
@@ -2714,7 +2890,7 @@ function parseShowtime(
 
 
     let endMinutes =
-        clockToMinutes(
+        clockMinutes(
             endHour,
             endMinute,
             endPeriod
@@ -2727,21 +2903,23 @@ function parseShowtime(
     ) {
 
         endMinutes +=
-            24 * 60;
+            24 *
+            60;
+
     }
 
 
     return {
 
         start:
-            formatClock(
+            formatTime(
                 startHour,
                 startMinute,
                 startPeriod
             ),
 
         end:
-            formatClock(
+            formatTime(
                 endHour,
                 endMinute,
                 endPeriod
@@ -2750,17 +2928,17 @@ function parseShowtime(
         startMinutes,
 
         endMinutes
+
     };
+
 }
 
 
-/*
-=========================================================
-TIME HELPERS
-=========================================================
-*/
+/* =========================================================
+   PERIOD
+========================================================= */
 
-function markerToPeriod(
+function periodFromMarker(
     marker
 ) {
 
@@ -2780,6 +2958,7 @@ function markerToPeriod(
     ) {
 
         return "AM";
+
     }
 
 
@@ -2790,49 +2969,69 @@ function markerToPeriod(
     ) {
 
         return "PM";
+
     }
 
 
     return "";
+
 }
 
 
-function clockToMinutes(
+/* =========================================================
+   TIME TO MINUTES
+========================================================= */
+
+function clockMinutes(
     hour,
     minute,
     period
 ) {
 
-    let value =
+    let adjusted =
         hour;
 
 
     if (
-        period === "PM" &&
-        value !== 12
+        period ===
+        "PM" &&
+        adjusted !==
+        12
     ) {
 
-        value += 12;
+        adjusted +=
+            12;
+
     }
 
 
     if (
-        period === "AM" &&
-        value === 12
+        period ===
+        "AM" &&
+        adjusted ===
+        12
     ) {
 
-        value = 0;
+        adjusted =
+            0;
+
     }
 
 
     return (
-        value * 60 +
+        adjusted *
+        60 +
         minute
     );
+
 }
 
 
-function formatClock(
+/* =========================================================
+   FORMAT TIME
+========================================================= */
+
+function formatTime(
     hour,
     minute,
     period
@@ -2850,14 +3049,13 @@ function formatClock(
         " " +
         period
     );
+
 }
 
 
-/*
-=========================================================
-POPULATE SERVER DROPDOWN
-=========================================================
-*/
+/* =========================================================
+   SERVER DROPDOWN
+========================================================= */
 
 function populateServers() {
 
@@ -2878,9 +3076,12 @@ function populateServers() {
                         names.add(
                             server.name
                         );
+
                     }
+
                 }
             );
+
         }
     );
 
@@ -2893,7 +3094,11 @@ function populateServers() {
         ...names
     ]
         .sort(
-            (a, b) =>
+            (
+                a,
+                b
+            ) =>
+
                 a.localeCompare(
                     b
                 )
@@ -2910,6 +3115,7 @@ function populateServers() {
                 option.value =
                     name;
 
+
                 option.textContent =
                     name;
 
@@ -2917,16 +3123,16 @@ function populateServers() {
                 serverSelect.appendChild(
                     option
                 );
+
             }
         );
+
 }
 
 
-/*
-=========================================================
-SHOW SCHEDULE BUTTON
-=========================================================
-*/
+/* =========================================================
+   SHOW SCHEDULE BUTTON
+========================================================= */
 
 document
     .getElementById(
@@ -2947,27 +3153,28 @@ document
                 );
 
                 return;
+
             }
 
 
             buildSchedule(
                 name
             );
+
         }
     );
 
 
-/*
-=========================================================
-BUILD PERSONAL SCHEDULE
-=========================================================
-*/
+/* =========================================================
+   BUILD PERSONAL SCHEDULE
+========================================================= */
 
 function buildSchedule(
     name
 ) {
 
-    const assignments = [];
+    const assignments =
+        [];
 
 
     lineupData.forEach(
@@ -2986,16 +3193,27 @@ function buildSchedule(
                             ...showing,
 
                             server
+
                         });
+
                     }
+
                 }
             );
+
         }
     );
 
 
+    /*
+    Chronological order.
+    */
+
     assignments.sort(
-        (a, b) =>
+        (
+            a,
+            b
+        ) =>
 
             a.startMinutes -
             b.startMinutes
@@ -3007,7 +3225,8 @@ function buildSchedule(
 
 
     scheduleName.textContent =
-        name + "'s Lineup";
+        name +
+        "'s Lineup";
 
 
     scheduleDate.textContent =
@@ -3015,17 +3234,21 @@ function buildSchedule(
 
 
     if (
-        !assignments.length
+        assignments.length ===
+        0
     ) {
 
         scheduleList.innerHTML =
             "<p>No assignments found.</p>";
 
-        scheduleSection.classList.remove(
-            "hidden"
-        );
+
+        scheduleSection
+            .classList
+            .remove("hidden");
+
 
         return;
+
     }
 
 
@@ -3050,12 +3273,12 @@ function buildSchedule(
                 );
 
 
-            let rowsHTML =
+            let rowHTML =
                 "";
 
 
             /*
-            Conditional server
+            Parenthetical / conditional server.
             */
 
             if (
@@ -3063,7 +3286,7 @@ function buildSchedule(
                     .conditional
             ) {
 
-                rowsHTML = `
+                rowHTML = `
 
                     <div class="conditional-label">
                         ONLY IF OVER 50 GUESTS
@@ -3079,14 +3302,9 @@ function buildSchedule(
 
             }
 
-
-            /*
-            Normal server
-            */
-
             else {
 
-                rowsHTML = `
+                rowHTML = `
 
                     <div class="rows">
                         ${escapeHTML(
@@ -3098,15 +3316,15 @@ function buildSchedule(
 
 
                 if (
-
-                    item.server.over50 &&
-
-                    item.server.over50 !==
-                        item.server.rows
-
+                    item.server
+                        .over50 &&
+                    item.server
+                        .over50 !==
+                    item.server
+                        .rows
                 ) {
 
-                    rowsHTML += `
+                    rowHTML += `
 
                         <div class="over50">
 
@@ -3114,15 +3332,16 @@ function buildSchedule(
 
                             <strong>
                                 ${escapeHTML(
-                                    item.server
-                                        .over50
+                                    item.server.over50
                                 )}
                             </strong>
 
                         </div>
 
                     `;
+
                 }
+
             }
 
 
@@ -3151,17 +3370,24 @@ function buildSchedule(
                 </div>
 
 
-                <div class="assignment-movie">
+                ${
+                    item.movie
+                        ?
+                        `
+                        <div class="assignment-movie">
 
-                    ${escapeHTML(
-                        item.movie ||
+                            ${escapeHTML(
+                                item.movie
+                            )}
+
+                        </div>
+                        `
+                        :
                         ""
-                    )}
-
-                </div>
+                }
 
 
-                ${rowsHTML}
+                ${rowHTML}
 
             `;
 
@@ -3169,40 +3395,76 @@ function buildSchedule(
             scheduleList.appendChild(
                 card
             );
+
         }
     );
 
 
-    scheduleSection.classList.remove(
-        "hidden"
-    );
+    scheduleSection
+        .classList
+        .remove("hidden");
 
 
-    scheduleSection.scrollIntoView({
-        behavior:
-            "smooth"
-    });
+    scheduleSection
+        .scrollIntoView({
+            behavior:
+                "smooth"
+        });
+
 }
 
 
-/*
-=========================================================
-DEBUG / VERIFICATION OUTPUT
-=========================================================
-*/
+/* =========================================================
+   DEBUG OUTPUT
+========================================================= */
 
 function showDetectedLineup(
-    layout
+    columns,
+    rows
 ) {
 
     let output =
+        "";
 
-        "DETECTED LINEUP\n" +
+
+    output +=
+        "GRID DETECTION SUCCESSFUL\n";
+
+    output +=
         "====================================\n\n";
 
 
     output +=
+        "Showing column edges:\n";
+
+    output +=
+        columns
+            .map(
+                value =>
+                    Math.round(
+                        value
+                    )
+            )
+            .join(", ");
+
+
+    output +=
+        "\n\n";
+
+
+    output +=
+        `Horizontal grid lines: ${rows.length}\n`;
+
+
+    output +=
         `Showings detected: ${lineupData.length}\n\n`;
+
+
+    output +=
+        "DETECTED LINEUP\n";
+
+    output +=
+        "====================================\n\n";
 
 
     for (
@@ -3229,6 +3491,7 @@ function showDetectedLineup(
 
             output +=
                 "  No showings detected\n";
+
         }
 
 
@@ -3238,8 +3501,13 @@ function showDetectedLineup(
                 output +=
                     "\n";
 
+
                 output +=
-                    `  ${showing.start} - ${showing.end}\n`;
+                    "  " +
+                    showing.start +
+                    " - " +
+                    showing.end +
+                    "\n";
 
 
                 if (
@@ -3247,16 +3515,21 @@ function showDetectedLineup(
                 ) {
 
                     output +=
-                        `  ${showing.movie}\n`;
+                        "  " +
+                        showing.movie +
+                        "\n";
+
                 }
 
 
                 if (
-                    !showing.servers.length
+                    !showing.servers
+                        .length
                 ) {
 
                     output +=
-                        "  ! No server detected\n";
+                        "  ! No servers detected\n";
+
                 }
 
 
@@ -3264,65 +3537,69 @@ function showDetectedLineup(
                     server => {
 
                         if (
-                            server.conditional
+                            server
+                                .conditional
                         ) {
 
                             output +=
-                                `  -> (${server.name})`;
-
-                            output +=
-                                ` : ${server.rows}`;
-
-                            output +=
+                                "  -> (" +
+                                server.name +
+                                ") : " +
+                                server.rows +
                                 " ONLY OVER 50\n";
 
-                        } else {
+                        }
+
+                        else {
 
                             output +=
-                                `  -> ${server.name}`;
-
-                            output +=
-                                ` : ${server.rows}`;
+                                "  -> " +
+                                server.name +
+                                " : " +
+                                server.rows;
 
 
                             if (
-
                                 server.over50 &&
-
                                 server.over50 !==
-                                    server.rows
-
+                                server.rows
                             ) {
 
                                 output +=
-                                    ` -> ${server.over50} over 50`;
+                                    " -> " +
+                                    server.over50 +
+                                    " over 50";
+
                             }
 
 
                             output +=
                                 "\n";
+
                         }
+
                     }
                 );
+
             }
         );
 
 
         output +=
             "\n------------------------------------\n\n";
+
     }
 
 
     detectedText.textContent =
         output;
+
 }
 
 
-/*
-=========================================================
-ESCAPE HTML
-=========================================================
-*/
+/* =========================================================
+   ESCAPE HTML
+========================================================= */
 
 function escapeHTML(
     value
@@ -3335,20 +3612,25 @@ function escapeHTML(
             /&/g,
             "&amp;"
         )
+
         .replace(
             /</g,
             "&lt;"
         )
+
         .replace(
             />/g,
             "&gt;"
         )
+
         .replace(
             /"/g,
             "&quot;"
         )
+
         .replace(
             /'/g,
             "&#039;"
         );
+
 }
