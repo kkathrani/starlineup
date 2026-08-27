@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.3
+VERSION 13.4
 ============================================================
 
 Keeps:
@@ -19,6 +19,9 @@ Keeps:
 Improves:
 ✓ Detected Text fully hides after personal schedule opens
 ✓ Detected Text resets properly for a new uploaded lineup
+✓ More tolerant grid-line brightness detection
+✓ Detects the theater-table body dynamically
+✓ Handles differently cropped / scaled lineup screenshots
 ============================================================
 */
 
@@ -973,17 +976,26 @@ function detectShowingColumns(
         [];
 
 
+    /*
+    The old detector only counted extremely dark pixels.
+    Some exported schedules use gray anti-aliased grid lines,
+    so those vertical lines disappeared from detection.
+
+    We scan the middle portion of the image where the theater
+    table normally lives and allow medium-gray grid pixels.
+    */
+
     const yStart =
         Math.floor(
             analysis.height *
-            0.05
+            0.10
         );
 
 
     const yEnd =
         Math.ceil(
             analysis.height *
-            0.98
+            0.90
         );
 
 
@@ -1020,7 +1032,7 @@ function detectShowingColumns(
                     analysis,
                     x,
                     y
-                ) < 65
+                ) < 185
             ) {
 
                 dark++;
@@ -1033,7 +1045,7 @@ function detectShowingColumns(
         if (
             dark /
             samples >
-            0.68
+            0.52
         ) {
 
             candidates.push(
@@ -1058,7 +1070,7 @@ function detectShowingColumns(
 
                 x >
                 analysis.width *
-                0.05 &&
+                0.04 &&
 
                 x <
                 analysis.width *
@@ -1087,12 +1099,8 @@ function findBestColumnSet(
     }
 
 
-    let best =
-        null;
-
-
-    let bestScore =
-        Infinity;
+    const possible =
+        [];
 
 
     for (
@@ -1178,17 +1186,30 @@ function findBestColumnSet(
             average;
 
 
+        /*
+        Keep only sets that look like the five evenly spaced
+        showing columns. The first theater-label column is often
+        the same width, so when two sets are similarly good we
+        intentionally prefer the one farther to the right.
+        */
+
         if (
-            score <
-            bestScore
+            score <=
+            0.18
         ) {
 
-            bestScore =
-                score;
+            possible.push({
 
+                set,
 
-            best =
-                set;
+                score,
+
+                right:
+                    set[
+                        set.length - 1
+                    ]
+
+            });
 
         }
 
@@ -1196,9 +1217,7 @@ function findBestColumnSet(
 
 
     if (
-        !best ||
-        bestScore >
-        0.15
+        !possible.length
     ) {
 
         return [];
@@ -1206,7 +1225,231 @@ function findBestColumnSet(
     }
 
 
-    return best;
+    possible.sort(
+        (
+            a,
+            b
+        ) => {
+
+            const scoreDifference =
+                a.score -
+                b.score;
+
+
+            /*
+            If one candidate is clearly more evenly spaced,
+            use it. Otherwise prefer the rightmost candidate,
+            which excludes the theater-name column.
+            */
+
+            if (
+                Math.abs(
+                    scoreDifference
+                ) >
+                0.03
+            ) {
+
+                return scoreDifference;
+
+            }
+
+
+            return (
+                b.right -
+                a.right
+            );
+
+        }
+    );
+
+
+    return possible[0].set;
+
+}
+
+
+// =========================================================
+// DETECT THE VERTICAL RANGE OF THE THEATER TABLE
+// =========================================================
+
+function detectTheaterBodyRange(
+    analysis,
+    columns
+) {
+
+    if (
+        !columns ||
+        columns.length !== 6
+    ) {
+
+        return null;
+
+    }
+
+
+    const requiredEdges =
+        Math.max(
+            3,
+            Math.ceil(
+                columns.length *
+                0.65
+            )
+        );
+
+
+    const qualifying =
+        [];
+
+
+    for (
+        let y = 0;
+        y < analysis.height;
+        y++
+    ) {
+
+        let matches =
+            0;
+
+
+        for (
+            const x of
+            columns
+        ) {
+
+            if (
+                brightnessAt(
+                    analysis,
+                    x,
+                    y
+                ) <
+                190
+            ) {
+
+                matches++;
+
+            }
+
+        }
+
+
+        if (
+            matches >=
+            requiredEdges
+        ) {
+
+            qualifying.push(
+                y
+            );
+
+        }
+
+    }
+
+
+    if (
+        !qualifying.length
+    ) {
+
+        return null;
+
+    }
+
+
+    /*
+    Convert qualifying rows into runs. Tiny interruptions are
+    ignored because text can temporarily cover a grid line.
+    */
+
+    const runs =
+        [];
+
+
+    let start =
+        qualifying[0];
+
+
+    let previous =
+        qualifying[0];
+
+
+    for (
+        let i = 1;
+        i < qualifying.length;
+        i++
+    ) {
+
+        const current =
+            qualifying[i];
+
+
+        if (
+            current -
+            previous <=
+            5
+        ) {
+
+            previous =
+                current;
+
+            continue;
+
+        }
+
+
+        runs.push({
+            top:
+                start,
+            bottom:
+                previous,
+            height:
+                previous -
+                start +
+                1
+        });
+
+
+        start =
+            current;
+
+
+        previous =
+            current;
+
+    }
+
+
+    runs.push({
+        top:
+            start,
+        bottom:
+            previous,
+        height:
+            previous -
+                start +
+                1
+    });
+
+
+    runs.sort(
+        (
+            a,
+            b
+        ) =>
+            b.height -
+            a.height
+    );
+
+
+    if (
+        !runs.length
+    ) {
+
+        return null;
+
+    }
+
+
+    return runs[0];
 
 }
 
@@ -1249,9 +1492,46 @@ function detectTheaterGrid(
         );
 
 
+    const columns =
+        detectShowingColumns(
+            analysis
+        );
+
+
+    const body =
+        detectTheaterBodyRange(
+            analysis,
+            columns
+        );
+
+
+    const yStart =
+        body
+            ? Math.max(
+                0,
+                body.top - 3
+            )
+            : Math.floor(
+                analysis.height *
+                0.08
+            );
+
+
+    const yEnd =
+        body
+            ? Math.min(
+                analysis.height - 1,
+                body.bottom + 3
+            )
+            : Math.ceil(
+                analysis.height *
+                0.95
+            );
+
+
     for (
-        let y = 0;
-        y < analysis.height;
+        let y = yStart;
+        y <= yEnd;
         y++
     ) {
 
@@ -1270,7 +1550,7 @@ function detectTheaterGrid(
                     analysis,
                     x,
                     y
-                ) < 75
+                ) < 185
             ) {
 
                 dark++;
@@ -1280,10 +1560,15 @@ function detectTheaterGrid(
         }
 
 
+        /*
+        A true horizontal grid line crosses almost the entire
+        showing area. Requiring strong coverage filters out text.
+        */
+
         if (
             dark /
             samples >
-            0.60
+            0.88
         ) {
 
             candidates.push(
@@ -1308,23 +1593,25 @@ function detectTheaterGrid(
 
                 y >
                 analysis.height *
-                0.025 &&
+                0.02 &&
 
                 y <
                 analysis.height *
-                0.985
+                0.99
         );
 
 
     return findBestTheaterGrid(
-        lines
+        lines,
+        body
     );
 
 }
 
 
 function findBestTheaterGrid(
-    lines
+    lines,
+    body = null
 ) {
 
     if (
@@ -1333,6 +1620,15 @@ function findBestTheaterGrid(
     ) {
 
         return [];
+
+    }
+
+
+    if (
+        lines.length === 41
+    ) {
+
+        return lines;
 
     }
 
@@ -1385,7 +1681,6 @@ function findBestTheaterGrid(
                 valid =
                     false;
 
-
                 break;
 
             }
@@ -1403,59 +1698,14 @@ function findBestTheaterGrid(
         }
 
 
-        const movieGaps =
-            [];
-
-
-        const smallGaps =
-            [];
-
-
-        gaps.forEach(
-            (
-                gap,
-                index
-            ) => {
-
-                if (
-                    index % 5 === 0
-                ) {
-
-                    movieGaps.push(
-                        gap
-                    );
-
-                }
-
-                else {
-
-                    smallGaps.push(
-                        gap
-                    );
-
-                }
-
-            }
-        );
-
-
-        const movieMedian =
+        const gapMedian =
             median(
-                movieGaps
-            );
-
-
-        const smallMedian =
-            median(
-                smallGaps
+                gaps
             );
 
 
         if (
-            !smallMedian ||
-            movieMedian <
-            smallMedian *
-            1.35
+            !gapMedian
         ) {
 
             continue;
@@ -1463,36 +1713,79 @@ function findBestTheaterGrid(
         }
 
 
+        /*
+        Penalize only truly abnormal spacing. Theater-header
+        heights vary from schedule to schedule, so we no longer
+        assume every fifth gap must be 35% taller.
+        */
+
         let score =
             0;
 
 
-        movieGaps.forEach(
+        gaps.forEach(
             gap => {
+
+                const ratio =
+                    gap /
+                    gapMedian;
+
+
+                if (
+                    ratio < 0.45 ||
+                    ratio > 2.60
+                ) {
+
+                    score +=
+                        10;
+
+                }
+
 
                 score +=
                     Math.abs(
                         gap -
-                        movieMedian
+                        gapMedian
                     ) /
-                    movieMedian;
+                    gapMedian *
+                    0.05;
 
             }
         );
 
 
-        smallGaps.forEach(
-            gap => {
+        /*
+        If we dynamically detected the theater-table body,
+        heavily favor the 41-line set whose first and last
+        boundaries match that body.
+        */
 
-                score +=
-                    Math.abs(
-                        gap -
-                        smallMedian
-                    ) /
-                    smallMedian;
+        if (body) {
 
-            }
-        );
+            score +=
+                Math.abs(
+                    set[0] -
+                    body.top
+                ) /
+                Math.max(
+                    1,
+                    gapMedian
+                );
+
+
+            score +=
+                Math.abs(
+                    set[
+                        set.length - 1
+                    ] -
+                    body.bottom
+                ) /
+                Math.max(
+                    1,
+                    gapMedian
+                );
+
+        }
 
 
         if (
@@ -1518,7 +1811,6 @@ function findBestTheaterGrid(
     );
 
 }
-
 
 // =========================================================
 // CLUSTER GRID LINES
