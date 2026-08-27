@@ -1,24 +1,14 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 11
+VERSION 12
 ============================================================
 
-Keeps:
-✓ Working grid detection
-✓ Per-cell OCR
-✓ Tolerant time parsing
-✓ Chronological schedule
-✓ 1 server = ALL ROWS
-✓ 2 servers = split rows
-✓ 3rd row = conditional over 50
-
-Improves:
-✓ Removes stray OCR tokens like "L Kishan"
-✓ Removes suffixes like "Kishan L"
-✓ Removes junk entries like "L L"
-✓ Rejects obvious garbage names
-✓ Deduplicates names inside showings
+Adds:
+✓ Fixes "Lkishan" -> "Kishan"
+✓ Fixes "KishanL" -> "Kishan"
+✓ Only strips attached L when it matches another detected name
+✓ Does NOT damage legitimate names like Luca
 ============================================================
 */
 
@@ -141,7 +131,6 @@ imageInput.addEventListener(
 
         uploadedFile =
             imageInput.files[0];
-
 
         if (!uploadedFile) {
             return;
@@ -298,7 +287,7 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // DETECT ROW GRID
+            // DETECT ROWS
             // ---------------------------------------------
 
             const rows =
@@ -512,7 +501,7 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // SERVER NAME OCR
+            // SERVER OCR
             // ---------------------------------------------
 
             await worker.setParameters({
@@ -685,14 +674,14 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // CLEAN / MERGE SERVER NAMES
+            // VERSION 12 NAME CLEANUP
             // ---------------------------------------------
 
             canonicalizeServerNames();
 
 
             // ---------------------------------------------
-            // APPLY ASSIGNMENTS
+            // ASSIGN ROWS
             // ---------------------------------------------
 
             lineupData.forEach(
@@ -1512,7 +1501,7 @@ function findBestTheaterGrid(
 
 
 // =========================================================
-// CLUSTER LINES
+// CLUSTER GRID LINES
 // =========================================================
 
 function clusterPositions(
@@ -2205,7 +2194,7 @@ function parseShowtime(
 
 
 // =========================================================
-// STRONGER NAME CLEANUP
+// NAME CLEANUP
 // =========================================================
 
 function cleanServerName(
@@ -2239,22 +2228,19 @@ function cleanServerName(
     }
 
 
-    /*
-    Remove stray single-letter OCR tokens.
-
-    Examples:
-
-    L Kishan -> Kishan
-    Kishan L -> Kishan
-    L Brian -> Brian
-    L L -> blank
-    */
-
     let tokens =
         cleaned
             .split(" ")
             .filter(Boolean);
 
+
+    /*
+    Remove standalone OCR fragments.
+
+    L Kishan -> Kishan
+    Kishan L -> Kishan
+    L L -> blank
+    */
 
     if (
         tokens.length >
@@ -2286,10 +2272,6 @@ function cleanServerName(
         );
 
 
-    /*
-    Normalize capitalization.
-    */
-
     cleaned =
         cleaned
             .split(" ")
@@ -2306,10 +2288,6 @@ function cleanServerName(
             )
             .join(" ");
 
-
-    /*
-    Reject obvious junk.
-    */
 
     const garbage =
         new Set(
@@ -2336,10 +2314,6 @@ function cleanServerName(
 
     }
 
-
-    /*
-    Don't let row codes become names.
-    */
 
     if (
         /^[A-H]{1,8}$/i.test(
@@ -2382,18 +2356,20 @@ function cleanServerName(
 
 
 // =========================================================
-// CANONICALIZE SERVER NAMES
+// VERSION 12 CANONICALIZATION
 // =========================================================
 
 function canonicalizeServerNames() {
 
+    /*
+    --------------------------------------------------------
+    STEP 1
+    Re-clean every name.
+    --------------------------------------------------------
+    */
+
     lineupData.forEach(
         showing => {
-
-            /*
-            Run every already-read name through our
-            strongest cleanup again.
-            */
 
             showing.servers.forEach(
                 server => {
@@ -2407,10 +2383,6 @@ function canonicalizeServerNames() {
             );
 
 
-            /*
-            Remove blank entries.
-            */
-
             showing.servers =
                 showing.servers.filter(
                     server =>
@@ -2419,10 +2391,247 @@ function canonicalizeServerNames() {
                         )
                 );
 
+        }
+    );
+
+
+    /*
+    --------------------------------------------------------
+    STEP 2
+    Build list of all names detected.
+    --------------------------------------------------------
+    */
+
+    const allNames =
+        [];
+
+
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
+                server => {
+
+                    if (
+                        !allNames.includes(
+                            server.name
+                        )
+                    ) {
+
+                        allNames.push(
+                            server.name
+                        );
+
+                    }
+
+                }
+            );
+
+        }
+    );
+
+
+    /*
+    --------------------------------------------------------
+    STEP 3
+    Exact normalized-name map.
+    --------------------------------------------------------
+    */
+
+    const exactMap =
+        new Map();
+
+
+    allNames.forEach(
+        name => {
+
+            const key =
+                normalizeNameKey(
+                    name
+                );
+
+
+            if (
+                !exactMap.has(
+                    key
+                )
+            ) {
+
+                exactMap.set(
+                    key,
+                    name
+                );
+
+            }
+
+        }
+    );
+
+
+    /*
+    --------------------------------------------------------
+    STEP 4
+    Detect attached OCR "L".
+
+    Lkishan -> Kishan
+    Kishanl -> Kishan
+
+    IMPORTANT:
+    We only remove the L if the remaining text EXACTLY
+    matches another detected server name.
+
+    Therefore:
+    Luca stays Luca.
+    --------------------------------------------------------
+    */
+
+    const replacementMap =
+        new Map();
+
+
+    allNames.forEach(
+        name => {
+
+            const key =
+                normalizeNameKey(
+                    name
+                );
+
+
+            if (!key) {
+                return;
+            }
+
 
             /*
-            Remove duplicates inside a showing.
+            Leading L:
+            lkishan -> kishan
             */
+
+            if (
+                key.startsWith(
+                    "l"
+                ) &&
+                key.length >
+                3
+            ) {
+
+                const withoutLeadingL =
+                    key.slice(
+                        1
+                    );
+
+
+                if (
+                    exactMap.has(
+                        withoutLeadingL
+                    )
+                ) {
+
+                    replacementMap.set(
+                        name,
+                        exactMap.get(
+                            withoutLeadingL
+                        )
+                    );
+
+
+                    return;
+
+                }
+
+            }
+
+
+            /*
+            Trailing L:
+            kishanl -> kishan
+            */
+
+            if (
+                key.endsWith(
+                    "l"
+                ) &&
+                key.length >
+                3
+            ) {
+
+                const withoutTrailingL =
+                    key.slice(
+                        0,
+                        -1
+                    );
+
+
+                if (
+                    exactMap.has(
+                        withoutTrailingL
+                    )
+                ) {
+
+                    replacementMap.set(
+                        name,
+                        exactMap.get(
+                            withoutTrailingL
+                        )
+                    );
+
+
+                    return;
+
+                }
+
+            }
+
+
+            /*
+            No replacement.
+            */
+
+            replacementMap.set(
+                name,
+                name
+            );
+
+        }
+    );
+
+
+    /*
+    --------------------------------------------------------
+    STEP 5
+    Apply replacements.
+    --------------------------------------------------------
+    */
+
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
+                server => {
+
+                    server.name =
+                        replacementMap.get(
+                            server.name
+                        ) ||
+                        server.name;
+
+                }
+            );
+
+        }
+    );
+
+
+    /*
+    --------------------------------------------------------
+    STEP 6
+    Remove duplicate entries inside a showing.
+    --------------------------------------------------------
+    */
+
+    lineupData.forEach(
+        showing => {
 
             const seen =
                 new Set();
@@ -2433,8 +2642,14 @@ function canonicalizeServerNames() {
                     server => {
 
                         const key =
-                            server.name
-                                .toLowerCase();
+                            normalizeNameKey(
+                                server.name
+                            );
+
+
+                        if (!key) {
+                            return false;
+                        }
 
 
                         if (
@@ -2461,95 +2676,11 @@ function canonicalizeServerNames() {
         }
     );
 
-
-    /*
-    Second pass across the ENTIRE schedule.
-
-    This handles:
-    Kishan
-    Kishan L
-    L Kishan
-
-    after cleanup they all become Kishan.
-    */
-
-    const canonicalMap =
-        new Map();
-
-
-    lineupData.forEach(
-        showing => {
-
-            showing.servers.forEach(
-                server => {
-
-                    const key =
-                        normalizeNameKey(
-                            server.name
-                        );
-
-
-                    if (!key) {
-                        return;
-                    }
-
-
-                    if (
-                        !canonicalMap.has(
-                            key
-                        )
-                    ) {
-
-                        canonicalMap.set(
-                            key,
-                            server.name
-                        );
-
-                    }
-
-                }
-            );
-
-        }
-    );
-
-
-    lineupData.forEach(
-        showing => {
-
-            showing.servers.forEach(
-                server => {
-
-                    const key =
-                        normalizeNameKey(
-                            server.name
-                        );
-
-
-                    if (
-                        canonicalMap.has(
-                            key
-                        )
-                    ) {
-
-                        server.name =
-                            canonicalMap.get(
-                                key
-                            );
-
-                    }
-
-                }
-            );
-
-        }
-    );
-
 }
 
 
 // =========================================================
-// NAME COMPARISON KEY
+// NORMALIZED NAME KEY
 // =========================================================
 
 function normalizeNameKey(
@@ -2676,7 +2807,7 @@ function applyAssignmentRules(
 
 
     /*
-    CONDITIONAL THIRD SERVER
+    THIRD CONDITIONAL SERVER
     */
 
     conditionalServers.forEach(
@@ -2850,7 +2981,7 @@ function formatTime(
 
 
 // =========================================================
-// POPULATE SERVER DROPDOWN
+// SERVER DROPDOWN
 // =========================================================
 
 function populateServers() {
