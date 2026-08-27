@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.11
+VERSION 13.12
 ============================================================
 
 Keeps:
@@ -324,6 +324,35 @@ readButton.addEventListener(
                 `Horizontal grid lines: ${rows.length}\n`;
 
 
+            if (
+                columns.length === 6
+            ) {
+
+                detectedText.textContent +=
+                    `Column X: ${columns.map(
+                        value =>
+                            Math.round(
+                                value
+                            )
+                    ).join(", ")}\n`;
+
+            }
+
+
+            if (
+                rows.length === 41
+            ) {
+
+                detectedText.textContent +=
+                    `Grid Y: ${Math.round(rows[0])} → ${Math.round(
+                        rows[
+                            rows.length - 1
+                        ]
+                    )}\n`;
+
+            }
+
+
             /*
             Keep the older detector as a fallback. This gives us two
             independent ways to understand the same schedule instead of
@@ -499,16 +528,20 @@ readButton.addEventListener(
                         ];
 
 
-                    const raw =
-                        await ocrCell(
+                    const adaptiveTime =
+                        await ocrTimeCellAdaptive(
                             worker,
                             image,
                             left,
-                            timeTop,
                             right,
-                            timeBottom,
-                            "time"
+                            rows[base],
+                            rows[base + 1],
+                            rows[base + 2]
                         );
+
+
+                    const raw =
+                        adaptiveTime.raw;
 
 
                     const normalized =
@@ -518,9 +551,7 @@ readButton.addEventListener(
 
 
                     const parsed =
-                        parseShowtime(
-                            normalized
-                        );
+                        adaptiveTime.parsed;
 
 
                     detectedText.textContent +=
@@ -1079,12 +1110,34 @@ function detectScheduleGrid(
     analysis
 ) {
 
+    /*
+    VERSION 13.12
+
+    Step 1:
+    Detect the 41 horizontal lines that define the eight theater
+    blocks.
+
+    Step 2:
+    Once those rows are known, inspect ONLY the theater-table body
+    for vertical lines. This avoids assuming that the Theater label
+    column is the same width as the five showing columns.
+
+    Step 3:
+    Choose seven vertical boundaries:
+        left theater edge
+        theater/showing divider
+        five remaining showing boundaries
+
+    OCR then uses boundaries 1..6 as the five showing columns.
+    */
+
     const horizontalPasses = [
-        { brightness: 120, support: 0.42 },
-        { brightness: 150, support: 0.42 },
-        { brightness: 180, support: 0.42 },
-        { brightness: 205, support: 0.40 },
-        { brightness: 225, support: 0.38 }
+        { brightness: 110, support: 0.36 },
+        { brightness: 135, support: 0.36 },
+        { brightness: 160, support: 0.36 },
+        { brightness: 185, support: 0.34 },
+        { brightness: 210, support: 0.32 },
+        { brightness: 230, support: 0.30 }
     ];
 
 
@@ -1105,6 +1158,16 @@ function detectScheduleGrid(
             [];
 
 
+        const stepX =
+            Math.max(
+                1,
+                Math.round(
+                    analysis.width /
+                    1200
+                )
+            );
+
+
         for (
             let y = 0;
             y < analysis.height;
@@ -1113,16 +1176,6 @@ function detectScheduleGrid(
 
             let dark =
                 0;
-
-
-            const stepX =
-                Math.max(
-                    1,
-                    Math.round(
-                        analysis.width /
-                        1200
-                    )
-                );
 
 
             let samples =
@@ -1223,198 +1276,34 @@ function detectScheduleGrid(
     }
 
 
-    /*
-    Every selected row is a true horizontal table line. Its first and
-    last dark pixels give a very stable estimate of the table width.
-    Taking the median makes the estimate insensitive to text or a few
-    unusually long header/footer lines.
-    */
-    const leftBounds =
-        [];
-
-
-    const rightBounds =
-        [];
-
-
-    const boundThresholds =
-        [
-            120,
-            160,
-            195
-        ];
-
-
-    for (
-        const rowY of
-        bestRows
-    ) {
-
-        const y =
-            Math.max(
-                0,
-                Math.min(
-                    analysis.height - 1,
-                    Math.round(
-                        rowY
-                    )
-                )
-            );
-
-
-        let rowLeft =
-            null;
-
-
-        let rowRight =
-            null;
-
-
-        for (
-            const threshold of
-            boundThresholds
-        ) {
-
-            const darkXs =
-                [];
-
-
-            for (
-                let x = 0;
-                x < analysis.width;
-                x++
-            ) {
-
-                if (
-                    brightnessAt(
-                        analysis,
-                        x,
-                        y
-                    ) <
-                    threshold
-                ) {
-
-                    darkXs.push(
-                        x
-                    );
-
-                }
-
-            }
-
-
-            if (
-                darkXs.length >=
-                analysis.width *
-                0.35
-            ) {
-
-                rowLeft =
-                    darkXs[0];
-
-
-                rowRight =
-                    darkXs[
-                        darkXs.length - 1
-                    ];
-
-
-                break;
-
-            }
-
-        }
-
-
-        if (
-            rowLeft !== null &&
-            rowRight !== null &&
-            rowRight -
-            rowLeft >=
-            analysis.width *
-            0.45
-        ) {
-
-            leftBounds.push(
-                rowLeft
-            );
-
-
-            rightBounds.push(
-                rowRight
-            );
-
-        }
-
-    }
-
-
-    if (
-        leftBounds.length < 10 ||
-        rightBounds.length < 10
-    ) {
-
-        return {
-            rows:
-                bestRows,
-            columns:
-                [],
-            strategy:
-                "horizontal rows found; table width failed"
-        };
-
-    }
-
-
-    const tableLeft =
-        median(
-            leftBounds
+    const top =
+        Math.max(
+            0,
+            Math.round(
+                bestRows[0]
+            )
         );
 
 
-    const tableRight =
-        median(
-            rightBounds
+    const bottom =
+        Math.min(
+            analysis.height - 1,
+            Math.round(
+                bestRows[
+                    bestRows.length - 1
+                ]
+            )
         );
 
 
-    const tableWidth =
-        tableRight -
-        tableLeft;
-
-
-    if (
-        tableWidth <=
-        analysis.width *
-        0.40
-    ) {
-
-        return {
-            rows:
-                bestRows,
-            columns:
-                [],
-            strategy:
-                "horizontal rows found; table too narrow"
-        };
-
-    }
-
-
     /*
-    The lineup template is one Theater-label column plus five showing
-    columns. Estimate seven boundaries by dividing the detected table
-    width into six columns, then snap every estimate to the strongest
-    nearby vertical grid line. This survives broken/merged vertical
-    lines because we only search locally around where that boundary is
-    geometrically expected to be.
+    Score every x position by how often it behaves like a vertical
+    rule INSIDE row interiors. Sampling row interiors instead of
+    horizontal boundaries prevents every horizontal line from
+    looking like a vertical line.
     */
-    const estimatedColumnWidth =
-        tableWidth /
-        6;
 
-
-    const rowMidpoints =
+    const sampleYs =
         [];
 
 
@@ -1424,268 +1313,519 @@ function detectScheduleGrid(
         i++
     ) {
 
-        rowMidpoints.push(
-            (
-                bestRows[i] +
-                bestRows[i + 1]
-            ) /
-            2
+        const a =
+            bestRows[i];
+
+
+        const b =
+            bestRows[i + 1];
+
+
+        const gap =
+            b - a;
+
+
+        if (
+            gap <= 2
+        ) {
+
+            continue;
+
+        }
+
+
+        /*
+        Three samples per row interior make the score tolerant of
+        text crossing a boundary at any one y position.
+        */
+        sampleYs.push(
+            a + gap * 0.25,
+            a + gap * 0.50,
+            a + gap * 0.75
         );
 
     }
 
 
-    const boundaries =
-        [];
+    const scores =
+        new Array(
+            analysis.width
+        ).fill(0);
+
+
+    let maximumScore =
+        0;
 
 
     for (
-        let boundaryIndex = 0;
-        boundaryIndex <= 6;
-        boundaryIndex++
+        let x = 0;
+        x < analysis.width;
+        x++
     ) {
 
-        const expected =
-            tableLeft +
-            estimatedColumnWidth *
-            boundaryIndex;
+        let dark =
+            0;
 
 
-        const radius =
-            Math.max(
-                5,
-                estimatedColumnWidth *
-                0.22
-            );
-
-
-        const searchLeft =
-            Math.max(
-                0,
-                Math.floor(
-                    expected -
-                    radius
-                )
-            );
-
-
-        const searchRight =
-            Math.min(
-                analysis.width - 1,
-                Math.ceil(
-                    expected +
-                    radius
-                )
-            );
-
-
-        let bestX =
-            Math.round(
-                expected
-            );
-
-
-        let bestScore =
-            -Infinity;
+        let veryDark =
+            0;
 
 
         for (
-            let x = searchLeft;
-            x <= searchRight;
-            x++
+            const sampleY of
+            sampleYs
         ) {
 
-            let darkHits =
-                0;
+            const y =
+                Math.max(
+                    top,
+                    Math.min(
+                        bottom,
+                        Math.round(
+                            sampleY
+                        )
+                    )
+                );
 
 
-            let veryDarkHits =
-                0;
+            const value =
+                Math.min(
+                    brightnessAt(
+                        analysis,
+                        x,
+                        y
+                    ),
+                    brightnessAt(
+                        analysis,
+                        x,
+                        y - 1
+                    ),
+                    brightnessAt(
+                        analysis,
+                        x,
+                        y + 1
+                    )
+                );
 
 
-            for (
-                const midpoint of
-                rowMidpoints
+            if (
+                value <
+                190
             ) {
 
-                const y =
-                    Math.max(
-                        0,
-                        Math.min(
-                            analysis.height - 1,
-                            Math.round(
-                                midpoint
-                            )
-                        )
-                    );
-
-
-                const brightness =
-                    Math.min(
-                        brightnessAt(
-                            analysis,
-                            x,
-                            y
-                        ),
-                        brightnessAt(
-                            analysis,
-                            x,
-                            y - 1
-                        ),
-                        brightnessAt(
-                            analysis,
-                            x,
-                            y + 1
-                        )
-                    );
-
-
-                if (
-                    brightness < 195
-                ) {
-
-                    darkHits++;
-
-                }
-
-
-                if (
-                    brightness < 110
-                ) {
-
-                    veryDarkHits++;
-
-                }
+                dark++;
 
             }
 
 
-            const distancePenalty =
-                Math.abs(
-                    x -
-                    expected
-                ) /
-                Math.max(
-                    1,
-                    radius
-                ) *
-                0.08;
-
-
-            const score =
-                darkHits /
-                Math.max(
-                    1,
-                    rowMidpoints.length
-                ) +
-                veryDarkHits /
-                Math.max(
-                    1,
-                    rowMidpoints.length
-                ) *
-                0.25 -
-                distancePenalty;
-
-
             if (
-                score >
-                bestScore
+                value <
+                105
             ) {
 
-                bestScore =
-                    score;
-
-
-                bestX =
-                    x;
+                veryDark++;
 
             }
 
         }
 
 
-        boundaries.push(
-            bestX
-        );
+        const score =
+            (
+                dark +
+                veryDark *
+                0.35
+            ) /
+            Math.max(
+                1,
+                sampleYs.length
+            );
+
+
+        scores[x] =
+            score;
+
+
+        if (
+            score >
+            maximumScore
+        ) {
+
+            maximumScore =
+                score;
+
+        }
 
     }
 
 
-    const boundaryGaps =
-        [];
+    /*
+    Build candidate vertical rules at several relative thresholds.
+    We keep the best seven-line geometry found across all passes.
+    */
+
+    const thresholdFractions = [
+        0.72,
+        0.64,
+        0.56,
+        0.48,
+        0.40,
+        0.34
+    ];
+
+
+    let bestVerticalSet =
+        null;
+
+
+    let bestVerticalScore =
+        Infinity;
 
 
     for (
-        let i = 0;
-        i < boundaries.length - 1;
-        i++
+        const fraction of
+        thresholdFractions
     ) {
 
-        boundaryGaps.push(
-            boundaries[i + 1] -
-            boundaries[i]
-        );
+        const threshold =
+            Math.max(
+                0.10,
+                maximumScore *
+                fraction
+            );
+
+
+        const rawCandidates =
+            [];
+
+
+        for (
+            let x = 0;
+            x < analysis.width;
+            x++
+        ) {
+
+            if (
+                scores[x] >=
+                threshold
+            ) {
+
+                rawCandidates.push(
+                    x
+                );
+
+            }
+
+        }
+
+
+        const clustered =
+            clusterPositions(
+                rawCandidates,
+                Math.max(
+                    2,
+                    Math.round(
+                        analysis.width *
+                        0.0035
+                    )
+                )
+            );
+
+
+        /*
+        Refine each cluster to the actual peak-score x rather than
+        merely using the cluster average.
+        */
+        const candidates =
+            clustered.map(
+                center => {
+
+                    const radius =
+                        Math.max(
+                            2,
+                            Math.round(
+                                analysis.width *
+                                0.006
+                            )
+                        );
+
+
+                    const left =
+                        Math.max(
+                            0,
+                            Math.floor(
+                                center -
+                                radius
+                            )
+                        );
+
+
+                    const right =
+                        Math.min(
+                            analysis.width - 1,
+                            Math.ceil(
+                                center +
+                                radius
+                            )
+                        );
+
+
+                    let bestX =
+                        Math.round(
+                            center
+                        );
+
+
+                    let bestScore =
+                        -1;
+
+
+                    for (
+                        let x = left;
+                        x <= right;
+                        x++
+                    ) {
+
+                        if (
+                            scores[x] >
+                            bestScore
+                        ) {
+
+                            bestScore =
+                                scores[x];
+
+
+                            bestX =
+                                x;
+
+                        }
+
+                    }
+
+
+                    return bestX;
+
+                }
+            )
+            .filter(
+                (
+                    value,
+                    index,
+                    array
+                ) =>
+                    index === 0 ||
+                    Math.abs(
+                        value -
+                        array[index - 1]
+                    ) >
+                    2
+            );
+
+
+        if (
+            candidates.length <
+            7
+        ) {
+
+            continue;
+
+        }
+
+
+        /*
+        Evaluate every consecutive set of seven candidate rules.
+
+        We do NOT require the first gap (Theater label column) to
+        equal the five showing widths. Only the final five gaps need
+        to be close to uniform.
+        */
+
+        for (
+            let startIndex = 0;
+            startIndex <=
+            candidates.length - 7;
+            startIndex++
+        ) {
+
+            const set =
+                candidates.slice(
+                    startIndex,
+                    startIndex + 7
+                );
+
+
+            const gaps =
+                [];
+
+
+            for (
+                let i = 0;
+                i < 6;
+                i++
+            ) {
+
+                gaps.push(
+                    set[i + 1] -
+                    set[i]
+                );
+
+            }
+
+
+            if (
+                gaps.some(
+                    gap =>
+                        gap <=
+                        analysis.width *
+                        0.035
+                )
+            ) {
+
+                continue;
+
+            }
+
+
+            const showingGaps =
+                gaps.slice(
+                    1
+                );
+
+
+            const showingMedian =
+                median(
+                    showingGaps
+                );
+
+
+            if (
+                !showingMedian
+            ) {
+
+                continue;
+
+            }
+
+
+            const showingError =
+                showingGaps.reduce(
+                    (
+                        sum,
+                        gap
+                    ) =>
+                        sum +
+                        Math.abs(
+                            gap -
+                            showingMedian
+                        ) /
+                        showingMedian,
+                    0
+                ) /
+                showingGaps.length;
+
+
+            const labelRatio =
+                gaps[0] /
+                showingMedian;
+
+
+            /*
+            Star Cinema exports vary, but the theater-label column is
+            still in roughly the same scale as a showing column.
+            Keep this intentionally broad.
+            */
+            if (
+                labelRatio <
+                0.45 ||
+                labelRatio >
+                1.65
+            ) {
+
+                continue;
+
+            }
+
+
+            const totalWidth =
+                set[6] -
+                set[0];
+
+
+            if (
+                totalWidth <
+                analysis.width *
+                0.45 ||
+                totalWidth >
+                analysis.width *
+                0.95
+            ) {
+
+                continue;
+
+            }
+
+
+            const lineStrength =
+                set.reduce(
+                    (
+                        sum,
+                        x
+                    ) =>
+                        sum +
+                        scores[x],
+                    0
+                ) /
+                set.length;
+
+
+            const centeredness =
+                Math.abs(
+                    (
+                        set[0] +
+                        set[6]
+                    ) /
+                    2 -
+                    analysis.width /
+                    2
+                ) /
+                analysis.width;
+
+
+            const geometryScore =
+                showingError *
+                4 +
+                Math.abs(
+                    labelRatio -
+                    0.85
+                ) *
+                0.30 +
+                centeredness *
+                0.30 -
+                lineStrength *
+                0.65;
+
+
+            if (
+                geometryScore <
+                bestVerticalScore
+            ) {
+
+                bestVerticalScore =
+                    geometryScore;
+
+
+                bestVerticalSet =
+                    set;
+
+            }
+
+        }
 
     }
 
 
-    const averageBoundaryGap =
-        boundaryGaps.reduce(
-            (
-                sum,
-                gap
-            ) =>
-                sum + gap,
-            0
-        ) /
-        Math.max(
-            1,
-            boundaryGaps.length
-        );
-
-
-    const boundaryVariance =
-        boundaryGaps.reduce(
-            (
-                sum,
-                gap
-            ) => {
-
-                const difference =
-                    gap -
-                    averageBoundaryGap;
-
-
-                return (
-                    sum +
-                    difference *
-                    difference
-                );
-
-            },
-            0
-        ) /
-        Math.max(
-            1,
-            boundaryGaps.length
-        );
-
-
-    const boundaryCV =
-        averageBoundaryGap > 0
-            ? Math.sqrt(
-                boundaryVariance
-            ) /
-                averageBoundaryGap
-            : 999;
-
-
     if (
-        boundaryCV > 0.25 ||
-        boundaryGaps.some(
-            gap =>
-                gap <= 0
-        )
+        !bestVerticalSet
     ) {
 
         return {
@@ -1694,7 +1834,7 @@ function detectScheduleGrid(
             columns:
                 [],
             strategy:
-                "horizontal rows found; column geometry rejected"
+                "horizontal rows found; direct vertical rules failed"
         };
 
     }
@@ -1705,17 +1845,16 @@ function detectScheduleGrid(
             bestRows,
 
         /*
-        boundary[0] is the far-left Theater label edge. The five
-        showing columns begin at boundary[1], so OCR needs boundaries
-        1 through 6: exactly six showing-column edges.
+        Skip the Theater-label column's left edge. The remaining six
+        rules bound the five showing columns.
         */
         columns:
-            boundaries.slice(
+            bestVerticalSet.slice(
                 1
             ),
 
         strategy:
-            "horizontal-first template geometry"
+            "horizontal-first + direct vertical rules"
     };
 
 }
@@ -3335,6 +3474,289 @@ async function ocrCell(
 
 
     return cleanedText;
+
+}
+
+
+// =========================================================
+// VERSION 13.12: ADAPTIVE TIME-CELL OCR
+// =========================================================
+
+async function ocrTimeCellAdaptive(
+    worker,
+    image,
+    left,
+    right,
+    row0,
+    row1,
+    row2
+) {
+
+    /*
+    Different schedule exports give the movie-title and time bands
+    slightly different heights. Try several plausible slices from the
+    top two theater rows instead of assuming one exact band.
+    */
+
+    const fullTop =
+        row0;
+
+
+    const fullBottom =
+        row2;
+
+
+    const fullHeight =
+        fullBottom -
+        fullTop;
+
+
+    const candidates = [
+
+        /*
+        Traditional time-only band.
+        */
+        [
+            row1,
+            row2
+        ],
+
+        /*
+        Lower half / lower 60% of the combined movie+time area.
+        */
+        [
+            fullTop +
+                fullHeight *
+                0.42,
+            fullBottom
+        ],
+
+        [
+            fullTop +
+                fullHeight *
+                0.32,
+            fullBottom
+        ],
+
+        /*
+        Entire movie+time cell. The time OCR whitelist suppresses
+        most title letters, and this rescues unusual row geometry.
+        */
+        [
+            fullTop,
+            fullBottom
+        ],
+
+        /*
+        Upper row as a final fallback in case the detector assigned
+        the title/time divider one line too low.
+        */
+        [
+            row0,
+            row1
+        ]
+
+    ];
+
+
+    const seen =
+        new Set();
+
+
+    let bestRaw =
+        "";
+
+
+    let bestParsed =
+        null;
+
+
+    let bestScore =
+        -Infinity;
+
+
+    for (
+        const [
+            candidateTop,
+            candidateBottom
+        ] of
+        candidates
+    ) {
+
+        const top =
+            Math.max(
+                row0,
+                candidateTop
+            );
+
+
+        const bottom =
+            Math.min(
+                row2,
+                candidateBottom
+            );
+
+
+        if (
+            bottom -
+            top <
+            3
+        ) {
+
+            continue;
+
+        }
+
+
+        const key =
+            `${Math.round(top)}:${Math.round(bottom)}`;
+
+
+        if (
+            seen.has(
+                key
+            )
+        ) {
+
+            continue;
+
+        }
+
+
+        seen.add(
+            key
+        );
+
+
+        const raw =
+            await ocrCell(
+                worker,
+                image,
+                left,
+                top,
+                right,
+                bottom,
+                "time"
+            );
+
+
+        const normalized =
+            normalizeTimeOCR(
+                raw
+            );
+
+
+        const parsed =
+            parseShowtime(
+                normalized
+            );
+
+
+        let score =
+            0;
+
+
+        if (parsed) {
+
+            score +=
+                100;
+
+
+            /*
+            Prefer reads that contain an explicit separator and two
+            complete clock values.
+            */
+            if (
+                /[-–—]/.test(
+                    raw
+                )
+            ) {
+
+                score +=
+                    12;
+
+            }
+
+
+            if (
+                /\d{1,2}:\d{2}/.test(
+                    raw
+                )
+            ) {
+
+                score +=
+                    8;
+
+            }
+
+
+            score -=
+                Math.abs(
+                    raw.length -
+                    11
+                ) *
+                0.15;
+
+        }
+
+
+        else {
+
+            /*
+            Keep the most time-like failed read for diagnostics.
+            */
+            score +=
+                (
+                    raw.match(
+                        /\d/g
+                    ) ||
+                    []
+                ).length;
+
+        }
+
+
+        if (
+            score >
+            bestScore
+        ) {
+
+            bestScore =
+                score;
+
+
+            bestRaw =
+                raw;
+
+
+            bestParsed =
+                parsed;
+
+        }
+
+
+        if (
+            parsed &&
+            score >=
+            115
+        ) {
+
+            break;
+
+        }
+
+    }
+
+
+    return {
+
+        raw:
+            bestRaw,
+
+        parsed:
+            bestParsed
+
+    };
 
 }
 
@@ -5137,7 +5559,7 @@ function populateServers() {
 
 
     detectedText.textContent +=
-        "\nSCRIPT VERSION: 13.11\n";
+        "\nSCRIPT VERSION: 13.12\n";
 
 }
 
