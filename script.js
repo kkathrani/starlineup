@@ -1,14 +1,26 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 12
+VERSION 13
 ============================================================
 
-Adds:
-✓ Fixes "Lkishan" -> "Kishan"
-✓ Fixes "KishanL" -> "Kishan"
-✓ Only strips attached L when it matches another detected name
+Keeps:
+✓ Working grid detection
+✓ Per-cell OCR
+✓ Tolerant time parsing
+✓ Chronological schedule
+✓ 1 server = ALL ROWS
+✓ 2 servers = split rows
+✓ 3rd row = conditional over 50
+
+Improves:
+✓ Removes standalone OCR junk like "L Kishan"
+✓ Removes suffix junk like "Kishan L"
+✓ Merges attached-character OCR errors:
+    Lkishan -> Kishan
+    KishanL -> Kishan
 ✓ Does NOT damage legitimate names like Luca
+✓ Removes duplicate server entries
 ============================================================
 */
 
@@ -674,7 +686,7 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // VERSION 12 NAME CLEANUP
+            // VERSION 13 NAME CLEANUP
             // ---------------------------------------------
 
             canonicalizeServerNames();
@@ -2235,7 +2247,7 @@ function cleanServerName(
 
 
     /*
-    Remove standalone OCR fragments.
+    Remove standalone single-letter OCR fragments.
 
     L Kishan -> Kishan
     Kishan L -> Kishan
@@ -2356,145 +2368,63 @@ function cleanServerName(
 
 
 // =========================================================
-// VERSION 12 CANONICALIZATION
+// VERSION 13 NAME CANONICALIZATION
 // =========================================================
 
 function canonicalizeServerNames() {
 
     /*
-    --------------------------------------------------------
+    ========================================================
     STEP 1
-    Re-clean every name.
-    --------------------------------------------------------
+    Clean all names.
+    ========================================================
     */
 
-    lineupData.forEach(
-        showing => {
+    lineupData.forEach(showing => {
 
-            showing.servers.forEach(
-                server => {
+        showing.servers.forEach(server => {
 
-                    server.name =
-                        cleanServerName(
-                            server.name
-                        );
-
-                }
-            );
-
-
-            showing.servers =
-                showing.servers.filter(
-                    server =>
-                        Boolean(
-                            server.name
-                        )
+            server.name =
+                cleanServerName(
+                    server.name
                 );
 
-        }
-    );
+        });
+
+
+        showing.servers =
+            showing.servers.filter(
+                server =>
+                    Boolean(
+                        server.name
+                    )
+            );
+
+    });
 
 
     /*
-    --------------------------------------------------------
+    ========================================================
     STEP 2
-    Build list of all names detected.
-    --------------------------------------------------------
+    Count every normalized spelling.
+    ========================================================
     */
 
-    const allNames =
-        [];
-
-
-    lineupData.forEach(
-        showing => {
-
-            showing.servers.forEach(
-                server => {
-
-                    if (
-                        !allNames.includes(
-                            server.name
-                        )
-                    ) {
-
-                        allNames.push(
-                            server.name
-                        );
-
-                    }
-
-                }
-            );
-
-        }
-    );
-
-
-    /*
-    --------------------------------------------------------
-    STEP 3
-    Exact normalized-name map.
-    --------------------------------------------------------
-    */
-
-    const exactMap =
+    const frequency =
         new Map();
 
 
-    allNames.forEach(
-        name => {
-
-            const key =
-                normalizeNameKey(
-                    name
-                );
-
-
-            if (
-                !exactMap.has(
-                    key
-                )
-            ) {
-
-                exactMap.set(
-                    key,
-                    name
-                );
-
-            }
-
-        }
-    );
-
-
-    /*
-    --------------------------------------------------------
-    STEP 4
-    Detect attached OCR "L".
-
-    Lkishan -> Kishan
-    Kishanl -> Kishan
-
-    IMPORTANT:
-    We only remove the L if the remaining text EXACTLY
-    matches another detected server name.
-
-    Therefore:
-    Luca stays Luca.
-    --------------------------------------------------------
-    */
-
-    const replacementMap =
+    const displayNames =
         new Map();
 
 
-    allNames.forEach(
-        name => {
+    lineupData.forEach(showing => {
+
+        showing.servers.forEach(server => {
 
             const key =
                 normalizeNameKey(
-                    name
+                    server.name
                 );
 
 
@@ -2503,184 +2433,318 @@ function canonicalizeServerNames() {
             }
 
 
-            /*
-            Leading L:
-            lkishan -> kishan
-            */
+            frequency.set(
+                key,
+                (
+                    frequency.get(
+                        key
+                    ) ||
+                    0
+                ) +
+                1
+            );
+
 
             if (
-                key.startsWith(
-                    "l"
-                ) &&
-                key.length >
-                3
+                !displayNames.has(
+                    key
+                )
             ) {
 
-                const withoutLeadingL =
+                displayNames.set(
+                    key,
+                    server.name
+                );
+
+            }
+
+        });
+
+    });
+
+
+    const keys =
+        [
+            ...displayNames.keys()
+        ];
+
+
+    /*
+    ========================================================
+    STEP 3
+    Build alias map.
+
+    If a detected name is exactly one character longer
+    than another detected name, AND removing the first
+    or last character produces the shorter name, merge it.
+
+    Examples:
+
+    lkishan -> kishan
+    kishanl -> kishan
+
+    Luca will NOT become Uca because "uca" is not
+    another detected name.
+    ========================================================
+    */
+
+    const aliases =
+        new Map();
+
+
+    keys.forEach(key => {
+
+        let canonical =
+            key;
+
+
+        const shorterMatches =
+            keys.filter(other => {
+
+                if (
+                    other ===
+                    key
+                ) {
+
+                    return false;
+
+                }
+
+
+                if (
+                    other.length !==
+                    key.length - 1
+                ) {
+
+                    return false;
+
+                }
+
+
+                const removeFirst =
                     key.slice(
                         1
                     );
 
 
-                if (
-                    exactMap.has(
-                        withoutLeadingL
-                    )
-                ) {
-
-                    replacementMap.set(
-                        name,
-                        exactMap.get(
-                            withoutLeadingL
-                        )
-                    );
-
-
-                    return;
-
-                }
-
-            }
-
-
-            /*
-            Trailing L:
-            kishanl -> kishan
-            */
-
-            if (
-                key.endsWith(
-                    "l"
-                ) &&
-                key.length >
-                3
-            ) {
-
-                const withoutTrailingL =
+                const removeLast =
                     key.slice(
                         0,
                         -1
                     );
 
 
-                if (
-                    exactMap.has(
-                        withoutTrailingL
-                    )
-                ) {
+                return (
 
-                    replacementMap.set(
-                        name,
-                        exactMap.get(
-                            withoutTrailingL
-                        )
-                    );
+                    removeFirst ===
+                    other ||
+
+                    removeLast ===
+                    other
+
+                );
+
+            });
 
 
-                    return;
-
-                }
-
-            }
-
+        if (
+            shorterMatches.length
+        ) {
 
             /*
-            No replacement.
+            Prefer the shorter spelling that appears
+            most often in the schedule.
             */
 
-            replacementMap.set(
-                name,
-                name
-            );
+            shorterMatches.sort(
+                (
+                    a,
+                    b
+                ) =>
 
-        }
-    );
-
-
-    /*
-    --------------------------------------------------------
-    STEP 5
-    Apply replacements.
-    --------------------------------------------------------
-    */
-
-    lineupData.forEach(
-        showing => {
-
-            showing.servers.forEach(
-                server => {
-
-                    server.name =
-                        replacementMap.get(
-                            server.name
+                    (
+                        frequency.get(
+                            b
                         ) ||
-                        server.name;
+                        0
+                    ) -
 
-                }
+                    (
+                        frequency.get(
+                            a
+                        ) ||
+                        0
+                    )
             );
 
+
+            canonical =
+                shorterMatches[0];
+
         }
-    );
+
+
+        aliases.set(
+            key,
+            canonical
+        );
+
+    });
 
 
     /*
-    --------------------------------------------------------
-    STEP 6
-    Remove duplicate entries inside a showing.
-    --------------------------------------------------------
+    ========================================================
+    STEP 4
+    Resolve chained errors.
+
+    Example:
+
+    llkishan
+      -> lkishan
+      -> kishan
+    ========================================================
     */
 
-    lineupData.forEach(
-        showing => {
+    function resolveAlias(
+        key
+    ) {
 
-            const seen =
-                new Set();
-
-
-            showing.servers =
-                showing.servers.filter(
-                    server => {
-
-                        const key =
-                            normalizeNameKey(
-                                server.name
-                            );
+        const visited =
+            new Set();
 
 
-                        if (!key) {
-                            return false;
-                        }
+        let current =
+            key;
 
 
-                        if (
-                            seen.has(
-                                key
-                            )
-                        ) {
+        while (
+            aliases.has(
+                current
+            ) &&
+            aliases.get(
+                current
+            ) !==
+            current &&
+            !visited.has(
+                current
+            )
+        ) {
 
-                            return false;
-
-                        }
-
-
-                        seen.add(
-                            key
-                        );
+            visited.add(
+                current
+            );
 
 
-                        return true;
-
-                    }
+            current =
+                aliases.get(
+                    current
                 );
 
         }
-    );
+
+
+        return current;
+
+    }
+
+
+    /*
+    ========================================================
+    STEP 5
+    Apply canonical spelling.
+    ========================================================
+    */
+
+    lineupData.forEach(showing => {
+
+        showing.servers.forEach(server => {
+
+            const originalKey =
+                normalizeNameKey(
+                    server.name
+                );
+
+
+            const finalKey =
+                resolveAlias(
+                    originalKey
+                );
+
+
+            if (
+                displayNames.has(
+                    finalKey
+                )
+            ) {
+
+                server.name =
+                    displayNames.get(
+                        finalKey
+                    );
+
+            }
+
+        });
+
+    });
+
+
+    /*
+    ========================================================
+    STEP 6
+    Remove duplicate server names inside one showing.
+    ========================================================
+    */
+
+    lineupData.forEach(showing => {
+
+        const seen =
+            new Set();
+
+
+        showing.servers =
+            showing.servers.filter(
+                server => {
+
+                    const key =
+                        normalizeNameKey(
+                            server.name
+                        );
+
+
+                    if (!key) {
+                        return false;
+                    }
+
+
+                    if (
+                        seen.has(
+                            key
+                        )
+                    ) {
+
+                        return false;
+
+                    }
+
+
+                    seen.add(
+                        key
+                    );
+
+
+                    return true;
+
+                }
+            );
+
+    });
 
 }
 
 
 // =========================================================
-// NORMALIZED NAME KEY
+// NAME NORMALIZATION KEY
 // =========================================================
 
 function normalizeNameKey(
