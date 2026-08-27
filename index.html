@@ -1,11 +1,104 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>My Website</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Star Cinema Lineup</title>
+
+    <link rel="stylesheet" href="style.css">
+
+    <!-- OCR library -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 
 <body>
-    <h1>It works!</h1>
-    <p>I just hosted my first website for free.</p>
+
+<div class="container">
+
+    <header>
+        <h1>Star Cinema</h1>
+        <p class="subtitle">Server Lineup</p>
+    </header>
+
+    <section class="card">
+
+        <h2>Today's Lineup</h2>
+
+        <label class="upload-box">
+
+            <input
+                type="file"
+                id="lineupImage"
+                accept="image/*"
+            >
+
+            <span>Upload Lineup Screenshot</span>
+
+        </label>
+
+        <div id="previewContainer" class="hidden">
+
+            <img id="imagePreview" alt="Uploaded lineup">
+
+        </div>
+
+        <button id="readButton" class="primary-button hidden">
+            Read Lineup
+        </button>
+
+        <div id="loading" class="hidden">
+            Reading lineup...
+            <div class="progress">
+                <div id="progressBar"></div>
+            </div>
+        </div>
+
+    </section>
+
+
+    <section id="serverSection" class="card hidden">
+
+        <h2>Who are you?</h2>
+
+        <select id="serverSelect">
+            <option value="">Select your name</option>
+        </select>
+
+        <button id="showSchedule" class="primary-button">
+            Show My Schedule
+        </button>
+
+    </section>
+
+
+    <section id="scheduleSection" class="hidden">
+
+        <div class="schedule-header">
+
+            <div>
+                <h2 id="scheduleName"></h2>
+                <p id="scheduleDate"></p>
+            </div>
+
+        </div>
+
+        <div id="scheduleList"></div>
+
+    </section>
+
+
+    <section id="debugSection" class="card hidden">
+
+        <h3>Detected Text</h3>
+
+        <pre id="detectedText"></pre>
+
+    </section>
+
+</div>
+
+<script src="script.js"></script>
+
 </body>
 </html>
