@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.13
+VERSION 13.14
 ============================================================
 
 Keeps:
@@ -289,7 +289,7 @@ readButton.addEventListener(
             // ---------------------------------------------
 
             /*
-            Version 13.11 no longer starts by asking for six long
+            Version 13.14 detects the theater rows first, then measures
             vertical lines. Some Star Cinema exports interrupt those
             lines enough that a vertical-first detector can find zero.
 
@@ -366,54 +366,100 @@ readButton.addEventListener(
             }
 
 
-            /*
-            Keep the older detector as a fallback. This gives us two
-            independent ways to understand the same schedule instead of
-            making one screenshot style a single point of failure.
-            */
             if (
-                columns.length !== 6 ||
-                rows.length !== 41
+                columns.length === 6
             ) {
 
-                const fallbackColumns =
-                    detectShowingColumns(
-                        analysis
-                    );
-
-
-                if (
-                    fallbackColumns.length === 6
-                ) {
-
-                    const fallbackRows =
-                        detectTheaterGrid(
-                            analysis,
-                            fallbackColumns[0],
-                            fallbackColumns[5]
+                const detectedGaps =
+                    columns
+                        .slice(
+                            1
+                        )
+                        .map(
+                            (
+                                value,
+                                index
+                            ) =>
+                                value -
+                                columns[index]
                         );
 
 
-                    if (
-                        fallbackRows.length === 41
-                    ) {
+                const averageDetectedGap =
+                    detectedGaps.reduce(
+                        (
+                            sum,
+                            value
+                        ) =>
+                            sum +
+                            value,
+                        0
+                    ) /
+                    detectedGaps.length;
 
-                        columns =
-                            fallbackColumns;
+
+                const detectedGapVariance =
+                    detectedGaps.reduce(
+                        (
+                            sum,
+                            value
+                        ) => {
+
+                            const difference =
+                                value -
+                                averageDetectedGap;
 
 
-                        rows =
-                            fallbackRows;
+                            return (
+                                sum +
+                                difference *
+                                difference
+                            );
+
+                        },
+                        0
+                    ) /
+                    detectedGaps.length;
 
 
-                        detectedText.textContent +=
-                            "Fallback grid detector succeeded.\n";
+                const detectedGapCV =
+                    Math.sqrt(
+                        detectedGapVariance
+                    ) /
+                    Math.max(
+                        1,
+                        averageDetectedGap
+                    );
 
-                    }
+
+                detectedText.textContent +=
+                    `Column regularity: ${(detectedGapCV * 100).toFixed(1)}%\n`;
+
+
+                if (
+                    detectedGapCV >
+                    0.12
+                ) {
+
+                    columns =
+                        [];
+
+
+                    detectedText.textContent +=
+                        "Rejected irregular column geometry.\n";
 
                 }
 
             }
+
+
+            /*
+            Version 13.14 deliberately does NOT substitute the legacy
+            detector here. The older fallback could return six boundaries
+            that looked valid numerically but cropped the wrong cells.
+            A failed geometry check is safer than silently generating an
+            incorrect server schedule.
+            */
 
 
             if (
@@ -1626,6 +1672,19 @@ function findSixShowingBoundaries(
     rows
 ) {
 
+    /*
+    VERSION 13.14
+
+    Real spreadsheet column rules are dark through most of the
+    theater-table height. Text is only dark in small local areas.
+
+    Measure vertical continuity while explicitly skipping pixels
+    close to horizontal rules, then find six nearly equally-spaced
+    showing boundaries. When two equally good six-line sets exist,
+    prefer the one farther right so the Theater-label column is not
+    mistaken for Showing Column 1.
+    */
+
     if (
         !rows ||
         rows.length !== 41
@@ -1636,55 +1695,106 @@ function findSixShowingBoundaries(
     }
 
 
+    const horizontalCenters =
+        rows.map(
+            value =>
+                Math.round(
+                    value
+                )
+        );
+
+
+    const yStart =
+        Math.max(
+            0,
+            Math.round(
+                rows[0] +
+                2
+            )
+        );
+
+
+    const yEnd =
+        Math.min(
+            analysis.height - 1,
+            Math.round(
+                rows[
+                    rows.length - 1
+                ] -
+                2
+            )
+        );
+
+
+    const stepY =
+        Math.max(
+            1,
+            Math.round(
+                analysis.height /
+                1200
+            )
+        );
+
+
     const sampleYs =
         [];
 
 
-    /*
-    Sample only row interiors. This measures vertical rule continuity
-    without horizontal rules contaminating every x position.
-    */
     for (
-        let i = 0;
-        i < rows.length - 1;
-        i++
+        let y = yStart;
+        y <= yEnd;
+        y += stepY
     ) {
 
-        const top =
-            rows[i];
+        let nearHorizontal =
+            false;
 
 
-        const bottom =
-            rows[i + 1];
-
-
-        const gap =
-            bottom -
-            top;
-
-
-        if (
-            gap <= 3
+        for (
+            const lineY of
+            horizontalCenters
         ) {
 
-            continue;
+            if (
+                Math.abs(
+                    y -
+                    lineY
+                ) <=
+                Math.max(
+                    2,
+                    stepY
+                )
+            ) {
+
+                nearHorizontal =
+                    true;
+
+                break;
+
+            }
 
         }
 
 
-        sampleYs.push(
-            top +
-                gap *
-                0.22,
+        if (
+            !nearHorizontal
+        ) {
 
-            top +
-                gap *
-                0.50,
+            sampleYs.push(
+                y
+            );
 
-            top +
-                gap *
-                0.78
-        );
+        }
+
+    }
+
+
+    if (
+        sampleYs.length <
+        20
+    ) {
+
+        return [];
 
     }
 
@@ -1695,7 +1805,7 @@ function findSixShowingBoundaries(
         ).fill(0);
 
 
-    let maxScore =
+    let maximumScore =
         0;
 
 
@@ -1705,20 +1815,14 @@ function findSixShowingBoundaries(
         x++
     ) {
 
-        let score =
+        let dark =
             0;
 
 
         for (
-            const rawY of
+            const y of
             sampleYs
         ) {
-
-            const y =
-                Math.round(
-                    rawY
-                );
-
 
             const value =
                 Math.min(
@@ -1742,33 +1846,19 @@ function findSixShowingBoundaries(
 
             if (
                 value <
-                205
+                175
             ) {
 
-                score +=
-                    1;
-
-            }
-
-
-            if (
-                value <
-                120
-            ) {
-
-                score +=
-                    0.45;
+                dark++;
 
             }
 
         }
 
 
-        score /=
-            Math.max(
-                1,
-                sampleYs.length
-            );
+        const score =
+            dark /
+            sampleYs.length;
 
 
         scores[x] =
@@ -1777,10 +1867,10 @@ function findSixShowingBoundaries(
 
         if (
             score >
-            maxScore
+            maximumScore
         ) {
 
-            maxScore =
+            maximumScore =
                 score;
 
         }
@@ -1789,37 +1879,45 @@ function findSixShowingBoundaries(
 
 
     /*
-    Turn the strongest vertical responses into peak positions.
-    Multiple thresholds make this tolerant of gray, thin, or
-    anti-aliased exported grid lines.
+    Spreadsheet rules generally have very high continuity.
+    Use both an absolute floor and a relative threshold so this
+    survives different screenshot contrast levels.
     */
+    const thresholds = [
 
-    const allPeaks =
-        [];
+        Math.max(
+            0.26,
+            maximumScore *
+            0.34
+        ),
 
+        Math.max(
+            0.20,
+            maximumScore *
+            0.27
+        ),
 
-    const fractions = [
-        0.78,
-        0.68,
-        0.58,
-        0.48,
-        0.40,
-        0.32
+        Math.max(
+            0.15,
+            maximumScore *
+            0.21
+        )
+
     ];
 
 
+    let bestSet =
+        null;
+
+
+    let bestScore =
+        Infinity;
+
+
     for (
-        const fraction of
-        fractions
+        const threshold of
+        thresholds
     ) {
-
-        const threshold =
-            Math.max(
-                0.08,
-                maxScore *
-                fraction
-            );
-
 
         const raw =
             [];
@@ -1845,417 +1943,498 @@ function findSixShowingBoundaries(
         }
 
 
-        const centers =
-            clusterPositions(
-                raw,
+        if (
+            !raw.length
+        ) {
+
+            continue;
+
+        }
+
+
+        const rawClusters =
+            [];
+
+
+        let current =
+            [
+                raw[0]
+            ];
+
+
+        for (
+            let i = 1;
+            i < raw.length;
+            i++
+        ) {
+
+            if (
+                raw[i] -
+                raw[i - 1] <=
                 Math.max(
-                    2,
+                    3,
                     Math.round(
                         analysis.width *
-                        0.003
+                        0.004
                     )
                 )
-            );
+            ) {
+
+                current.push(
+                    raw[i]
+                );
+
+            }
 
 
-        centers.forEach(
-            center => {
+            else {
 
-                const radius =
-                    Math.max(
-                        2,
-                        Math.round(
-                            analysis.width *
-                            0.007
-                        )
-                    );
+                rawClusters.push(
+                    current
+                );
 
 
-                let bestX =
-                    Math.round(
-                        center
-                    );
+                current =
+                    [
+                        raw[i]
+                    ];
+
+            }
+
+        }
 
 
-                let best =
-                    -1;
+        rawClusters.push(
+            current
+        );
 
 
-                for (
-                    let x =
-                        Math.max(
-                            0,
-                            bestX -
-                            radius
+        const candidates =
+            rawClusters
+                .map(
+                    cluster => {
+
+                        let bestX =
+                            cluster[0];
+
+
+                        let strongest =
+                            scores[
+                                bestX
+                            ];
+
+
+                        cluster.forEach(
+                            x => {
+
+                                if (
+                                    scores[x] >
+                                    strongest
+                                ) {
+
+                                    strongest =
+                                        scores[x];
+
+
+                                    bestX =
+                                        x;
+
+                                }
+
+                            }
                         );
-                    x <=
-                    Math.min(
-                        analysis.width - 1,
-                        bestX +
-                        radius
-                    );
-                    x++
-                ) {
-
-                    if (
-                        scores[x] >
-                        best
-                    ) {
-
-                        best =
-                            scores[x];
 
 
-                        bestX =
-                            x;
+                        return bestX;
 
                     }
+                )
+                .filter(
+                    x =>
+                        x >
+                        analysis.width *
+                        0.035 &&
+
+                        x <
+                        analysis.width *
+                        0.985
+                )
+                .sort(
+                    (
+                        a,
+                        b
+                    ) =>
+                        a -
+                        b
+                );
+
+
+        if (
+            candidates.length <
+            6
+        ) {
+
+            continue;
+
+        }
+
+
+        /*
+        Pick two candidate rules as the outer edges of the five
+        showing columns, then snap the four expected interior rules
+        to nearby real candidates.
+        */
+        for (
+            let firstIndex = 0;
+            firstIndex <
+            candidates.length - 5;
+            firstIndex++
+        ) {
+
+            for (
+                let lastIndex =
+                    firstIndex + 5;
+                lastIndex <
+                candidates.length;
+                lastIndex++
+            ) {
+
+                const first =
+                    candidates[
+                        firstIndex
+                    ];
+
+
+                const last =
+                    candidates[
+                        lastIndex
+                    ];
+
+
+                const span =
+                    last -
+                    first;
+
+
+                if (
+                    span <
+                    analysis.width *
+                    0.42 ||
+
+                    span >
+                    analysis.width *
+                    0.82
+                ) {
+
+                    continue;
 
                 }
 
 
-                allPeaks.push(
-                    bestX
-                );
-
-            }
-        );
-
-    }
+                const expectedGap =
+                    span /
+                    5;
 
 
-    const peaks =
-        clusterPositions(
-            allPeaks,
-            Math.max(
-                3,
-                Math.round(
+                if (
+                    expectedGap <
                     analysis.width *
-                    0.006
-                )
-            )
-        )
-            .map(
-                value =>
-                    Math.round(
-                        value
-                    )
-            )
-            .filter(
-                x =>
-                    x >
+                    0.065 ||
+
+                    expectedGap >
                     analysis.width *
-                    0.04 &&
+                    0.19
+                ) {
 
-                    x <
-                    analysis.width *
-                    0.98
-            );
+                    continue;
 
-
-    if (
-        peaks.length <
-        6
-    ) {
-
-        return [];
-
-    }
+                }
 
 
-    /*
-    The five showing columns are the most stable piece of geometry in
-    every schedule example: six boundaries with five nearly equal
-    gaps.
-
-    Search for that arithmetic progression directly. This avoids the
-    Version 13.12 mistake of treating an internal vertical rule as the
-    theater/showing divider.
-    */
-
-    let bestSet =
-        null;
+                const set =
+                    [];
 
 
-    let bestSetScore =
-        Infinity;
+                let totalSnapError =
+                    0;
 
 
-    for (
-        let i = 0;
-        i < peaks.length - 5;
-        i++
-    ) {
-
-        for (
-            let j = i + 5;
-            j < peaks.length;
-            j++
-        ) {
-
-            const first =
-                peaks[i];
+                let failed =
+                    false;
 
 
-            const last =
-                peaks[j];
-
-
-            const span =
-                last -
-                first;
-
-
-            if (
-                span <
-                analysis.width *
-                0.48 ||
-
-                span >
-                analysis.width *
-                0.90
-            ) {
-
-                continue;
-
-            }
-
-
-            const step =
-                span /
-                5;
-
-
-            if (
-                step <
-                analysis.width *
-                0.07 ||
-
-                step >
-                analysis.width *
-                0.22
-            ) {
-
-                continue;
-
-            }
-
-
-            const set =
-                [];
-
-
-            let totalError =
-                0;
-
-
-            let totalStrength =
-                0;
-
-
-            let failed =
-                false;
-
-
-            let previous =
-                -Infinity;
-
-
-            for (
-                let k = 0;
-                k < 6;
-                k++
-            ) {
-
-                const expected =
-                    first +
-                    step *
-                    k;
-
-
-                let nearest =
-                    null;
-
-
-                let nearestDistance =
-                    Infinity;
+                let previous =
+                    -Infinity;
 
 
                 for (
-                    const peak of
-                    peaks
+                    let position = 0;
+                    position < 6;
+                    position++
                 ) {
 
-                    if (
-                        peak <=
-                        previous
+                    const expected =
+                        first +
+                        expectedGap *
+                        position;
+
+
+                    let nearest =
+                        null;
+
+
+                    let nearestDistance =
+                        Infinity;
+
+
+                    for (
+                        const candidate of
+                        candidates
                     ) {
 
-                        continue;
+                        if (
+                            candidate <=
+                            previous
+                        ) {
+
+                            continue;
+
+                        }
+
+
+                        const distance =
+                            Math.abs(
+                                candidate -
+                                expected
+                            );
+
+
+                        if (
+                            distance <
+                            nearestDistance
+                        ) {
+
+                            nearestDistance =
+                                distance;
+
+
+                            nearest =
+                                candidate;
+
+                        }
 
                     }
 
 
-                    const distance =
-                        Math.abs(
-                            peak -
-                            expected
-                        );
-
-
                     if (
-                        distance <
-                        nearestDistance
+                        nearest === null ||
+
+                        nearestDistance >
+                        Math.max(
+                            7,
+                            expectedGap *
+                            0.14
+                        )
                     ) {
 
-                        nearestDistance =
-                            distance;
+                        failed =
+                            true;
 
-
-                        nearest =
-                            peak;
+                        break;
 
                     }
+
+
+                    set.push(
+                        nearest
+                    );
+
+
+                    previous =
+                        nearest;
+
+
+                    totalSnapError +=
+                        nearestDistance /
+                        expectedGap;
 
                 }
 
 
                 if (
-                    nearest === null ||
-
-                    nearestDistance >
-                    Math.max(
-                        8,
-                        step *
-                        0.16
-                    )
+                    failed
                 ) {
 
-                    failed =
-                        true;
-
-                    break;
+                    continue;
 
                 }
 
 
-                set.push(
-                    nearest
-                );
+                const gaps =
+                    [];
 
 
-                previous =
-                    nearest;
+                for (
+                    let i = 0;
+                    i < 5;
+                    i++
+                ) {
+
+                    gaps.push(
+                        set[i + 1] -
+                        set[i]
+                    );
+
+                }
 
 
-                totalError +=
-                    nearestDistance /
-                    step;
+                const averageGap =
+                    gaps.reduce(
+                        (
+                            sum,
+                            value
+                        ) =>
+                            sum +
+                            value,
+                        0
+                    ) /
+                    gaps.length;
 
 
-                totalStrength +=
-                    scores[
-                        Math.max(
-                            0,
-                            Math.min(
-                                analysis.width - 1,
-                                Math.round(
-                                    nearest
-                                )
-                            )
-                        )
-                    ];
+                const gapVariance =
+                    gaps.reduce(
+                        (
+                            sum,
+                            value
+                        ) => {
+
+                            const difference =
+                                value -
+                                averageGap;
+
+
+                            return (
+                                sum +
+                                difference *
+                                difference
+                            );
+
+                        },
+                        0
+                    ) /
+                    gaps.length;
+
+
+                const gapCV =
+                    Math.sqrt(
+                        gapVariance
+                    ) /
+                    Math.max(
+                        1,
+                        averageGap
+                    );
+
+
+                /*
+                A real five-column schedule grid is very regular.
+                Never accept the highly uneven geometry that caused
+                the Version 13.12 / 13.13 OCR failures.
+                */
+                if (
+                    gapCV >
+                    0.11
+                ) {
+
+                    continue;
+
+                }
+
+
+                const averageStrength =
+                    set.reduce(
+                        (
+                            sum,
+                            x
+                        ) =>
+                            sum +
+                            scores[x],
+                        0
+                    ) /
+                    set.length;
+
+
+                const rightPreference =
+                    set[
+                        set.length - 1
+                    ] /
+                    analysis.width;
+
+
+                const candidateScore =
+                    gapCV *
+                    10 +
+
+                    totalSnapError *
+                    1.4 -
+
+                    averageStrength *
+                    1.7 -
+
+                    rightPreference *
+                    0.10;
+
+
+                if (
+                    candidateScore <
+                    bestScore
+                ) {
+
+                    bestScore =
+                        candidateScore;
+
+
+                    bestSet =
+                        set;
+
+                }
+
+
+                else if (
+                    bestSet &&
+                    Math.abs(
+                        candidateScore -
+                        bestScore
+                    ) <
+                    0.03 &&
+
+                    set[
+                        set.length - 1
+                    ] >
+                    bestSet[
+                        bestSet.length - 1
+                    ]
+                ) {
+
+                    /*
+                    If the Theater-label boundary and first showing
+                    boundary form another nearly regular sequence,
+                    prefer the rightmost sequence.
+                    */
+                    bestSet =
+                        set;
+
+                }
 
             }
 
-
-            if (failed) {
-                continue;
-            }
+        }
 
 
-            const gaps =
-                [];
+        if (
+            bestSet
+        ) {
 
-
-            for (
-                let k = 0;
-                k < 5;
-                k++
-            ) {
-
-                gaps.push(
-                    set[k + 1] -
-                    set[k]
-                );
-
-            }
-
-
-            const gapMedian =
-                median(
-                    gaps
-                );
-
-
-            const gapVariation =
-                gaps.reduce(
-                    (
-                        sum,
-                        gap
-                    ) =>
-                        sum +
-                        Math.abs(
-                            gap -
-                            gapMedian
-                        ) /
-                        gapMedian,
-                    0
-                ) /
-                gaps.length;
-
-
-            /*
-            Hard guard: a set like 143,76,73,152,146 must never be
-            accepted as five showing columns.
-            */
-            if (
-                gapVariation >
-                0.13
-            ) {
-
-                continue;
-
-            }
-
-
-            const averageStrength =
-                totalStrength /
-                6;
-
-
-            const score =
-                totalError *
-                2.2 +
-                gapVariation *
-                8 -
-                averageStrength *
-                0.70;
-
-
-            if (
-                score <
-                bestSetScore
-            ) {
-
-                bestSetScore =
-                    score;
-
-
-                bestSet =
-                    set;
-
-            }
+            break;
 
         }
 
@@ -2463,7 +2642,7 @@ function detectScheduleGrid(
         rows,
         columns,
         strategy:
-            "visual rows + equal showing columns"
+            "13.14 continuity rows + equal showing columns"
     };
 
 }
@@ -6168,7 +6347,7 @@ function populateServers() {
 
 
     detectedText.textContent +=
-        "\nSCRIPT VERSION: 13.13\n";
+        "\nSCRIPT VERSION: 13.14\n";
 
 }
 
