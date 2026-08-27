@@ -3,6 +3,7 @@ const imagePreview = document.getElementById("imagePreview");
 const previewContainer = document.getElementById("previewContainer");
 
 const readButton = document.getElementById("readButton");
+
 const serverSection = document.getElementById("serverSection");
 const serverSelect = document.getElementById("serverSelect");
 
@@ -24,17 +25,8 @@ let uploadedFile = null;
 
 /*
 ====================================================
-STAR CINEMA THEATER ROW CONFIGURATION
+THEATER ROW ASSIGNMENTS
 ====================================================
-
-These correspond to the labels printed on the
-left side of the Star Cinema lineup.
-
-normal = assignment below 50 guests
-over50 = assignment when the theater exceeds 50
-
-The third server is conditional and only joins
-when occupancy exceeds 50.
 */
 
 const theaterRows = {
@@ -98,14 +90,15 @@ imageInput.addEventListener("change", () => {
 
     uploadedFile = imageInput.files[0];
 
-    if (!uploadedFile) return;
+    if (!uploadedFile) {
+        return;
+    }
 
     imagePreview.src = URL.createObjectURL(uploadedFile);
 
     previewContainer.classList.remove("hidden");
     readButton.classList.remove("hidden");
 
-    // Reset old results
     serverSection.classList.add("hidden");
     scheduleSection.classList.add("hidden");
     debugSection.classList.add("hidden");
@@ -136,49 +129,28 @@ readButton.addEventListener("click", async () => {
     serverSection.classList.add("hidden");
     scheduleSection.classList.add("hidden");
 
+    debugSection.classList.remove("hidden");
+
     detectedText.textContent =
         "Preparing image...\n";
 
-    debugSection.classList.remove("hidden");
-
     try {
 
-        /*
-        --------------------------------------------
-        Load image
-        --------------------------------------------
-        */
-
         const image = await loadImage(uploadedFile);
-
-        /*
-        --------------------------------------------
-        Preprocess image
-
-        We enlarge it 2X and convert it to very
-        high contrast black/white.
-
-        This makes spreadsheet text dramatically
-        easier for OCR to recognize.
-        --------------------------------------------
-        */
 
         const processed = preprocessImage(image);
 
         detectedText.textContent +=
-            `Image prepared: ${image.width} × ${image.height}\n`;
+            `Image prepared: ${image.width} x ${image.height}\n`;
 
         detectedText.textContent +=
-            "Starting OCR...\n\n";
+            "Starting OCR...\n";
 
 
         /*
-        --------------------------------------------
-        Create one OCR worker.
-
-        This is faster than starting Tesseract
-        over and over for every spreadsheet cell.
-        --------------------------------------------
+        ====================================================
+        CREATE OCR WORKER
+        ====================================================
         */
 
         const worker = await Tesseract.createWorker(
@@ -192,14 +164,13 @@ readButton.addEventListener("click", async () => {
                         "recognizing text"
                     ) {
 
-                        const percent =
+                        const percentage =
                             Math.round(
                                 message.progress * 100
                             );
 
                         progressBar.style.width =
-                            percent + "%";
-
+                            percentage + "%";
                     }
                 }
             }
@@ -207,38 +178,82 @@ readButton.addEventListener("click", async () => {
 
 
         /*
-        Request TSV output.
-
-        TSV gives us the X/Y position of every
-        recognized word.
-
-        THAT is the important change from our
-        previous version.
+        ====================================================
+        OCR WITH TSV POSITION OUTPUT
+        ====================================================
         */
 
         const result = await worker.recognize(
             processed.canvas,
-            {},
+            undefined,
             {
                 text: true,
                 tsv: true
             }
         );
 
+        console.log(
+            "Tesseract result:",
+            result
+        );
+
+        console.log(
+            "Tesseract data:",
+            result.data
+        );
+
+        console.log(
+            "TSV:",
+            result.data.tsv
+        );
+
         await worker.terminate();
 
 
         /*
-        --------------------------------------------
-        Extract positioned words
-        --------------------------------------------
+        ====================================================
+        CHECK OCR OUTPUT
+        ====================================================
         */
 
-        const words =
-            parseTSV(
-                result.data.tsv,
-                processed.scale
+        if (!result.data) {
+            throw new Error(
+                "Tesseract returned no data."
             );
+        }
+
+        if (!result.data.tsv) {
+
+            detectedText.textContent +=
+                "\nTesseract did not return TSV positional data.\n";
+
+            detectedText.textContent +=
+                "\nRaw text:\n\n";
+
+            detectedText.textContent +=
+                result.data.text || "(no text returned)";
+
+            throw new Error(
+                "No TSV output was returned by Tesseract."
+            );
+        }
+
+
+        /*
+        ====================================================
+        CONVERT TSV TO POSITIONED WORDS
+        ====================================================
+        */
+
+        const words = parseTSV(
+            result.data.tsv,
+            processed.scale
+        );
+
+        console.log(
+            "Positioned OCR words:",
+            words
+        );
 
 
         detectedText.textContent =
@@ -246,32 +261,37 @@ readButton.addEventListener("click", async () => {
 
 
         /*
-        --------------------------------------------
-        Convert the positioned OCR into theaters
-        --------------------------------------------
+        ====================================================
+        PARSE STAR CINEMA GRID
+        ====================================================
         */
 
-        lineupData =
-            parseStarCinemaSheet(
-                words,
-                image.width,
-                image.height
-            );
+        lineupData = parseStarCinemaSheet(
+            words,
+            image.width,
+            image.height
+        );
+
+
+        console.log(
+            "Parsed lineup:",
+            lineupData
+        );
 
 
         /*
-        --------------------------------------------
-        Show our interpretation for debugging
-        --------------------------------------------
+        ====================================================
+        SHOW DEBUG RESULT
+        ====================================================
         */
 
         showDetectedLineup();
 
 
         /*
-        --------------------------------------------
-        Generate server dropdown
-        --------------------------------------------
+        ====================================================
+        POPULATE SERVER LIST
+        ====================================================
         */
 
         populateServers();
@@ -291,7 +311,6 @@ readButton.addEventListener("click", async () => {
             serverSection.scrollIntoView({
                 behavior: "smooth"
             });
-
         }
 
     }
@@ -301,12 +320,16 @@ readButton.addEventListener("click", async () => {
         console.error(error);
 
         detectedText.textContent +=
-            "\nERROR:\n" +
-            error.message;
+            "\n\nERROR:\n" +
+            (
+                error?.stack ||
+                error?.message ||
+                String(error)
+            );
 
         alert(
             "There was a problem reading the lineup. " +
-            "Scroll down to Detected Text for details."
+            "The technical error is shown below."
         );
 
     }
@@ -327,31 +350,40 @@ LOAD IMAGE
 
 function loadImage(file) {
 
-    return new Promise((resolve, reject) => {
+    return new Promise(
+        (resolve, reject) => {
 
-        const img = new Image();
+            const img = new Image();
 
-        const url =
-            URL.createObjectURL(file);
+            const url =
+                URL.createObjectURL(file);
 
-        img.onload = () => {
+            img.onload = () => {
 
-            URL.revokeObjectURL(url);
-            resolve(img);
+                URL.revokeObjectURL(url);
+                resolve(img);
+            };
 
-        };
+            img.onerror = () => {
 
-        img.onerror = reject;
+                URL.revokeObjectURL(url);
 
-        img.src = url;
+                reject(
+                    new Error(
+                        "Could not load the uploaded image."
+                    )
+                );
+            };
 
-    });
+            img.src = url;
+        }
+    );
 }
 
 
 /*
 ====================================================
-IMAGE PREPROCESSING
+PREPROCESS IMAGE
 ====================================================
 */
 
@@ -395,10 +427,9 @@ function preprocessImage(image) {
 
 
     /*
-    Convert to grayscale + threshold.
+    Convert to black/white.
 
-    Spreadsheet background becomes white.
-    Text and borders stay black.
+    This helps OCR deal with gray spreadsheet cells.
     */
 
     for (
@@ -412,9 +443,11 @@ function preprocessImage(image) {
         const b = pixels[i + 2];
 
         const brightness =
-            0.299 * r +
-            0.587 * g +
-            0.114 * b;
+            (
+                0.299 * r +
+                0.587 * g +
+                0.114 * b
+            );
 
 
         const value =
@@ -426,7 +459,6 @@ function preprocessImage(image) {
         pixels[i] = value;
         pixels[i + 1] = value;
         pixels[i + 2] = value;
-
     }
 
 
@@ -441,13 +473,12 @@ function preprocessImage(image) {
         canvas,
         scale
     };
-
 }
 
 
 /*
 ====================================================
-PARSE TESSERACT TSV
+PARSE TSV
 ====================================================
 */
 
@@ -457,27 +488,54 @@ function parseTSV(tsv, scale) {
         return [];
     }
 
+
     const lines =
         tsv
             .trim()
             .split("\n");
 
+
     if (lines.length <= 1) {
         return [];
     }
 
+
     const headers =
-        lines[0]
-            .split("\t");
+        lines[0].split("\t");
 
 
     const index = {};
 
     headers.forEach(
         (header, i) => {
+
             index[header] = i;
+
         }
     );
+
+
+    const required = [
+        "text",
+        "conf",
+        "left",
+        "top",
+        "width",
+        "height"
+    ];
+
+
+    for (const field of required) {
+
+        if (
+            index[field] === undefined
+        ) {
+
+            throw new Error(
+                `TSV is missing required field: ${field}`
+            );
+        }
+    }
 
 
     const words = [];
@@ -495,11 +553,14 @@ function parseTSV(tsv, scale) {
 
         const text =
             (
-                parts[index.text] || ""
+                parts[index.text] ||
+                ""
             ).trim();
 
 
-        if (!text) continue;
+        if (!text) {
+            continue;
+        }
 
 
         const confidence =
@@ -521,15 +582,18 @@ function parseTSV(tsv, scale) {
                 parts[index.left]
             ) / scale;
 
+
         const top =
             parseFloat(
                 parts[index.top]
             ) / scale;
 
+
         const width =
             parseFloat(
                 parts[index.width]
             ) / scale;
+
 
         const height =
             parseFloat(
@@ -539,7 +603,9 @@ function parseTSV(tsv, scale) {
 
         if (
             !Number.isFinite(left) ||
-            !Number.isFinite(top)
+            !Number.isFinite(top) ||
+            !Number.isFinite(width) ||
+            !Number.isFinite(height)
         ) {
             continue;
         }
@@ -563,14 +629,11 @@ function parseTSV(tsv, scale) {
                 height / 2,
 
             confidence
-
         });
-
     }
 
 
     return words;
-
 }
 
 
@@ -590,22 +653,9 @@ function parseStarCinemaSheet(
 
 
     /*
-    These coordinates are proportions of the image.
+    Column edges for columns B through F.
 
-    Because the spreadsheet keeps the same layout,
-    this works whether the screenshot is 900px,
-    1800px, etc.
-    */
-
-
-    /*
-    The showtime area starts after the left theater
-    labels.
-
-    Approximate spreadsheet columns:
-
-    A = theater information
-    B-F = five possible showings
+    These are percentages of the image width.
     */
 
     const columnBounds = [
@@ -619,9 +669,7 @@ function parseStarCinemaSheet(
 
 
     /*
-    Theater 1 starts around 6.6% down the image.
-
-    Theater 8 ends around 96.3%.
+    Approximate top and bottom of the 8 theater blocks.
     */
 
     const theaterTop =
@@ -652,13 +700,8 @@ function parseStarCinemaSheet(
 
 
         /*
-        Inside each theater:
-
-        Movie title
-        Showtime
-        Server 1
-        Server 2
-        Server 3
+        Approximate vertical sections inside
+        each theater block.
         */
 
         const movieTop =
@@ -671,7 +714,7 @@ function parseStarCinemaSheet(
 
         const timeTop =
             theaterY +
-            theaterHeight * 0.31;
+            theaterHeight * 0.28;
 
         const timeBottom =
             theaterY +
@@ -680,25 +723,25 @@ function parseStarCinemaSheet(
 
         const server1Top =
             theaterY +
-            theaterHeight * 0.50;
+            theaterHeight * 0.49;
 
         const server1Bottom =
             theaterY +
-            theaterHeight * 0.68;
+            theaterHeight * 0.67;
 
 
         const server2Top =
             theaterY +
-            theaterHeight * 0.66;
+            theaterHeight * 0.65;
 
         const server2Bottom =
             theaterY +
-            theaterHeight * 0.84;
+            theaterHeight * 0.83;
 
 
         const server3Top =
             theaterY +
-            theaterHeight * 0.82;
+            theaterHeight * 0.81;
 
         const server3Bottom =
             theaterY +
@@ -715,16 +758,17 @@ function parseStarCinemaSheet(
                 imageWidth *
                 columnBounds[column];
 
+
             const right =
                 imageWidth *
                 columnBounds[column + 1];
 
 
             /*
-            Read movie
+            Get movie title.
             */
 
-            const movie =
+            const movieText =
                 wordsInRegion(
                     words,
                     left,
@@ -735,7 +779,7 @@ function parseStarCinemaSheet(
 
 
             /*
-            Read time
+            Get showtime.
             */
 
             const rawTime =
@@ -749,12 +793,13 @@ function parseStarCinemaSheet(
 
 
             const parsedTime =
-                parseShowtime(rawTime);
+                parseShowtime(
+                    rawTime
+                );
 
 
             /*
-            If there isn't a recognizable showtime,
-            this spreadsheet cell is probably blank.
+            Blank cells should not become showings.
             */
 
             if (!parsedTime) {
@@ -791,7 +836,7 @@ function parseStarCinemaSheet(
                     serverRow
                 ) => {
 
-                    let name =
+                    const rawName =
                         wordsInRegion(
                             words,
                             left,
@@ -801,16 +846,18 @@ function parseStarCinemaSheet(
                         );
 
 
-                    name =
+                    const name =
                         cleanServerName(
-                            name
+                            rawName
                         );
 
 
-                    if (!name) return;
+                    if (!name) {
+                        return;
+                    }
 
 
-                    const rowConfig =
+                    const config =
                         theaterRows[
                             theaterNumber
                         ][
@@ -823,19 +870,16 @@ function parseStarCinemaSheet(
                         name,
 
                         rows:
-                            rowConfig.normal,
+                            config.normal,
 
                         over50:
-                            rowConfig.over50,
+                            config.over50,
 
                         conditional:
                             Boolean(
-                                rowConfig
-                                    .conditional
+                                config.conditional
                             )
-
                     });
-
                 }
             );
 
@@ -847,7 +891,7 @@ function parseStarCinemaSheet(
 
                 movie:
                     cleanMovieTitle(
-                        movie
+                        movieText
                     ),
 
                 start:
@@ -857,26 +901,24 @@ function parseStarCinemaSheet(
                     parsedTime.end,
 
                 startMinutes:
-                    parsedTime
-                        .startMinutes,
+                    parsedTime.startMinutes,
+
+                endMinutes:
+                    parsedTime.endMinutes,
 
                 servers
-
             });
-
         }
-
     }
 
 
     return detected;
-
 }
 
 
 /*
 ====================================================
-GET WORDS INSIDE A REGION
+WORDS INSIDE REGION
 ====================================================
 */
 
@@ -890,45 +932,48 @@ function wordsInRegion(
 
     const found =
         words
-            .filter(word => {
-
-                return (
-                    word.centerX >= left &&
-                    word.centerX <= right &&
-                    word.centerY >= top &&
-                    word.centerY <= bottom
-                );
-
-            })
-            .sort((a, b) => {
-
-                if (
-                    Math.abs(
-                        a.centerY -
-                        b.centerY
-                    ) > 7
-                ) {
+            .filter(
+                word => {
 
                     return (
-                        a.centerY -
-                        b.centerY
+                        word.centerX >= left &&
+                        word.centerX <= right &&
+                        word.centerY >= top &&
+                        word.centerY <= bottom
                     );
 
                 }
+            )
+            .sort(
+                (a, b) => {
 
-                return (
-                    a.left -
-                    b.left
-                );
+                    if (
+                        Math.abs(
+                            a.centerY -
+                            b.centerY
+                        ) > 7
+                    ) {
 
-            });
+                        return (
+                            a.centerY -
+                            b.centerY
+                        );
+                    }
+
+                    return (
+                        a.left -
+                        b.left
+                    );
+                }
+            );
 
 
     return found
-        .map(word => word.text)
+        .map(
+            word => word.text
+        )
         .join(" ")
         .trim();
-
 }
 
 
@@ -944,6 +989,7 @@ function cleanMovieTitle(text) {
         return "Movie";
     }
 
+
     let cleaned =
         text
             .replace(
@@ -958,22 +1004,22 @@ function cleanMovieTitle(text) {
 
 
     /*
-    If OCR accidentally captured part of the time,
-    remove it.
+    Remove time if OCR included it.
     */
 
     cleaned =
-        cleaned.replace(
-            /\d{1,2}[:.]\d{2}.*$/i,
-            ""
-        ).trim();
+        cleaned
+            .replace(
+                /\d{1,2}[:;.]\d{2}.*$/i,
+                ""
+            )
+            .trim();
 
 
     return (
         cleaned ||
         "Movie"
     );
-
 }
 
 
@@ -985,7 +1031,9 @@ CLEAN SERVER NAME
 
 function cleanServerName(text) {
 
-    if (!text) return "";
+    if (!text) {
+        return "";
+    }
 
 
     let cleaned =
@@ -1005,24 +1053,27 @@ function cleanServerName(text) {
             .trim();
 
 
-    /*
-    Ignore common spreadsheet/OCR garbage.
-    */
-
     const badValues = [
         "ACE",
         "ACEG",
         "AD",
         "ADG",
+
         "BD",
         "BDF",
         "BDFH",
         "BE",
         "BEH",
+
         "C",
         "CF",
+
         "SEATING",
-        "CAPACITY"
+        "CAPACITY",
+
+        "THEATER",
+
+        "MOVIE"
     ];
 
 
@@ -1031,45 +1082,46 @@ function cleanServerName(text) {
             cleaned.toUpperCase()
         )
     ) {
-
         return "";
-
     }
 
-
-    /*
-    Don't accept extremely long garbage strings.
-    */
 
     if (
         cleaned.length < 2 ||
-        cleaned.length > 20
+        cleaned.length > 25
     ) {
-
         return "";
-
     }
 
 
     /*
-    Capitalize names nicely.
+    Reject strings with too many words,
+    since names should generally be short.
     */
+
+    if (
+        cleaned.split(" ").length > 3
+    ) {
+        return "";
+    }
+
 
     return cleaned
         .split(" ")
-        .map(word => {
+        .map(
+            word => {
 
-            return (
-                word.charAt(0)
-                    .toUpperCase() +
-                word
-                    .slice(1)
-                    .toLowerCase()
-            );
+                return (
+                    word.charAt(0)
+                        .toUpperCase() +
+                    word
+                        .slice(1)
+                        .toLowerCase()
+                );
 
-        })
+            }
+        )
         .join(" ");
-
 }
 
 
@@ -1081,42 +1133,38 @@ PARSE SHOWTIME
 
 function parseShowtime(text) {
 
-    if (!text) return null;
+    if (!text) {
+        return null;
+    }
 
 
     let cleaned =
         text
             .toLowerCase()
-            .replace(/\s/g, "")
-            .replace(/[–—]/g, "-")
-            .replace(/\./g, ":");
+            .replace(
+                /\s/g,
+                ""
+            )
+            .replace(
+                /[–—]/g,
+                "-"
+            )
+            .replace(
+                /[;.]/g,
+                ":"
+            );
 
 
     /*
-    OCR sometimes reads:
-    10;35 instead of 10:35
-    */
-
-    cleaned =
-        cleaned.replace(
-            /;/g,
-            ":"
-        );
-
-
-    /*
-    Expected examples:
-
+    OCR may recognize:
     11:00a-1:00
     1:50-3:33pm
     10:35-12:35a
-    7:30-9:20
     */
-
 
     const match =
         cleaned.match(
-            /(\d{1,2})[:](\d{2})([ap]m?|)?-(\d{1,2})[:](\d{2})([ap]m?|)?/
+            /(\d{1,2}):(\d{2})([ap]m?)?-(\d{1,2}):(\d{2})([ap]m?)?/
         );
 
 
@@ -1125,7 +1173,7 @@ function parseShowtime(text) {
     }
 
 
-    let startHour =
+    const startHour =
         Number(match[1]);
 
     const startMinute =
@@ -1135,7 +1183,7 @@ function parseShowtime(text) {
         match[3] || "";
 
 
-    let endHour =
+    const endHour =
         Number(match[4]);
 
     const endMinute =
@@ -1145,21 +1193,21 @@ function parseShowtime(text) {
         match[6] || "";
 
 
-    /*
-    Determine AM/PM.
+    if (
+        startHour > 12 ||
+        endHour > 12 ||
+        startMinute > 59 ||
+        endMinute > 59
+    ) {
+        return null;
+    }
 
-    Star Cinema schedules generally begin in the
-    late morning/afternoon and continue after
-    midnight.
-
-    We use the explicit marker when OCR sees it,
-    otherwise infer the most logical period.
-    */
 
     let startPeriod =
         markerToPeriod(
             startMarker
         );
+
 
     let endPeriod =
         markerToPeriod(
@@ -1167,11 +1215,15 @@ function parseShowtime(text) {
         );
 
 
+    /*
+    Infer periods when the spreadsheet omits AM/PM.
+    */
+
     if (!startPeriod) {
 
         if (
-            startHour >= 10 &&
-            startHour <= 11
+            startHour === 10 ||
+            startHour === 11
         ) {
 
             startPeriod = "AM";
@@ -1179,18 +1231,15 @@ function parseShowtime(text) {
         } else {
 
             startPeriod = "PM";
-
         }
-
     }
 
 
     if (!endPeriod) {
 
         /*
-        If ending hour is 12, 1 or 2 and this is a
-        late evening showing, it may end after
-        midnight.
+        Evening movies ending at 12/1/2
+        are assumed to end after midnight.
         */
 
         if (
@@ -1210,9 +1259,7 @@ function parseShowtime(text) {
 
             endPeriod =
                 startPeriod;
-
         }
-
     }
 
 
@@ -1232,11 +1279,6 @@ function parseShowtime(text) {
         );
 
 
-    /*
-    If end occurs after midnight,
-    move it into the next day.
-    */
-
     if (
         endMinutes <
         startMinutes
@@ -1244,7 +1286,6 @@ function parseShowtime(text) {
 
         endMinutes +=
             24 * 60;
-
     }
 
 
@@ -1266,9 +1307,7 @@ function parseShowtime(text) {
 
         startMinutes,
         endMinutes
-
     };
-
 }
 
 
@@ -1280,29 +1319,30 @@ TIME HELPERS
 
 function markerToPeriod(marker) {
 
-    if (!marker) return "";
+    if (!marker) {
+        return "";
+    }
 
-    marker =
+
+    const lower =
         marker.toLowerCase();
 
-    if (
-        marker.startsWith("a")
-    ) {
 
+    if (
+        lower.startsWith("a")
+    ) {
         return "AM";
-
     }
+
 
     if (
-        marker.startsWith("p")
+        lower.startsWith("p")
     ) {
-
         return "PM";
-
     }
+
 
     return "";
-
 }
 
 
@@ -1312,31 +1352,32 @@ function clockToMinutes(
     period
 ) {
 
-    let h = hour;
+    let adjustedHour =
+        hour;
+
 
     if (
         period === "PM" &&
-        h !== 12
+        adjustedHour !== 12
     ) {
 
-        h += 12;
-
+        adjustedHour += 12;
     }
+
 
     if (
         period === "AM" &&
-        h === 12
+        adjustedHour === 12
     ) {
 
-        h = 0;
-
+        adjustedHour = 0;
     }
 
+
     return (
-        h * 60 +
+        adjustedHour * 60 +
         minute
     );
-
 }
 
 
@@ -1354,7 +1395,6 @@ function formatClock(
         " " +
         period
     );
-
 }
 
 
@@ -1395,8 +1435,10 @@ function showDetectedLineup() {
             output +=
                 "  No showings detected\n\n";
 
-            continue;
+            output +=
+                "------------------------------\n\n";
 
+            continue;
         }
 
 
@@ -1416,8 +1458,7 @@ function showDetectedLineup() {
                 ) {
 
                     output +=
-                        "  ⚠ No servers detected\n";
-
+                        "  ! No servers detected\n";
                 }
 
 
@@ -1429,12 +1470,13 @@ function showDetectedLineup() {
                         ) {
 
                             output +=
-                                `  → (${server.name}) : ${server.rows} IF OVER 50\n`;
+                                `  -> (${server.name}) : ${server.rows} IF OVER 50\n`;
 
                         } else {
 
                             output +=
-                                `  → ${server.name} : ${server.rows}`;
+                                `  -> ${server.name} : ${server.rows}`;
+
 
                             if (
                                 server.over50 &&
@@ -1443,12 +1485,11 @@ function showDetectedLineup() {
                             ) {
 
                                 output +=
-                                    ` → ${server.over50} over 50`;
-
+                                    ` -> ${server.over50} over 50`;
                             }
 
-                            output += "\n";
 
+                            output += "\n";
                         }
 
                     }
@@ -1460,19 +1501,17 @@ function showDetectedLineup() {
 
         output +=
             "\n------------------------------\n\n";
-
     }
 
 
     detectedText.textContent =
         output;
-
 }
 
 
 /*
 ====================================================
-SERVER DROPDOWN
+POPULATE SERVER DROPDOWN
 ====================================================
 */
 
@@ -1488,15 +1527,16 @@ function populateServers() {
             showing.servers.forEach(
                 server => {
 
-                    if (server.name) {
+                    if (
+                        server.name
+                    ) {
+
                         names.add(
                             server.name
                         );
                     }
-
                 }
             );
-
         }
     );
 
@@ -1527,27 +1567,28 @@ function populateServers() {
                 serverSelect.appendChild(
                     option
                 );
-
             }
         );
-
 }
 
 
 /*
 ====================================================
-SHOW PERSONAL SCHEDULE
+SHOW PERSONAL SCHEDULE BUTTON
 ====================================================
 */
 
 document
-    .getElementById("showSchedule")
+    .getElementById(
+        "showSchedule"
+    )
     .addEventListener(
         "click",
         () => {
 
             const name =
                 serverSelect.value;
+
 
             if (!name) {
 
@@ -1556,14 +1597,21 @@ document
                 );
 
                 return;
-
             }
 
-            buildSchedule(name);
 
+            buildSchedule(
+                name
+            );
         }
     );
 
+
+/*
+====================================================
+BUILD PERSONAL SCHEDULE
+====================================================
+*/
 
 function buildSchedule(name) {
 
@@ -1585,14 +1633,10 @@ function buildSchedule(name) {
                             ...showing,
 
                             server
-
                         });
-
                     }
-
                 }
             );
-
         }
     );
 
@@ -1604,7 +1648,8 @@ function buildSchedule(name) {
     );
 
 
-    scheduleList.innerHTML = "";
+    scheduleList.innerHTML =
+        "";
 
 
     scheduleName.textContent =
@@ -1622,12 +1667,11 @@ function buildSchedule(name) {
         scheduleList.innerHTML =
             "<p>No assignments found.</p>";
 
-        scheduleSection
-            .classList
-            .remove("hidden");
+        scheduleSection.classList.remove(
+            "hidden"
+        );
 
         return;
-
     }
 
 
@@ -1643,19 +1687,22 @@ function buildSchedule(name) {
             card.className =
                 "assignment" +
                 (
-                    item.server
-                        .conditional
+                    item.server.conditional
                         ? " conditional"
                         : ""
                 );
 
 
-            let rowDisplay = "";
+            let rowDisplay =
+                "";
 
+
+            /*
+            Conditional third server
+            */
 
             if (
-                item.server
-                    .conditional
+                item.server.conditional
             ) {
 
                 rowDisplay = `
@@ -1672,7 +1719,14 @@ function buildSchedule(name) {
 
                 `;
 
-            } else {
+            }
+
+
+            /*
+            Normal first or second server
+            */
+
+            else {
 
                 rowDisplay = `
 
@@ -1697,16 +1751,13 @@ function buildSchedule(name) {
                             Over 50 guests:
                             <strong>
                                 ${escapeHTML(
-                                    item.server
-                                        .over50
+                                    item.server.over50
                                 )}
                             </strong>
                         </div>
 
                     `;
-
                 }
-
             }
 
 
@@ -1723,8 +1774,7 @@ function buildSchedule(name) {
                 </div>
 
                 <div class="assignment-title">
-                    Theater
-                    ${item.theater}
+                    Theater ${item.theater}
                 </div>
 
                 <div class="assignment-movie">
@@ -1741,26 +1791,24 @@ function buildSchedule(name) {
             scheduleList.appendChild(
                 card
             );
-
         }
     );
 
 
-    scheduleSection
-        .classList
-        .remove("hidden");
+    scheduleSection.classList.remove(
+        "hidden"
+    );
 
 
     scheduleSection.scrollIntoView({
         behavior: "smooth"
     });
-
 }
 
 
 /*
 ====================================================
-HTML SAFETY
+HTML ESCAPING
 ====================================================
 */
 
@@ -1787,5 +1835,4 @@ function escapeHTML(value) {
             /'/g,
             "&#039;"
         );
-
 }
