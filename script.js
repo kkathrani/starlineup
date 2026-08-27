@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13.4
+VERSION 13.5
 ============================================================
 
 Keeps:
@@ -2540,6 +2540,20 @@ function cleanServerName(
     }
 
 
+    cleaned =
+        cleaned
+            .replace(
+                /^[-' ]+|[-' ]+$/g,
+                ""
+            )
+            .trim();
+
+
+    if (!cleaned) {
+        return "";
+    }
+
+
     let tokens =
         cleaned
             .split(" ")
@@ -2630,11 +2644,58 @@ function cleanServerName(
     }
 
 
+    const lettersOnly =
+        cleaned.replace(
+            /[^A-Za-zÀ-ÿ]/g,
+            ""
+        );
+
+
     if (
-        cleaned.length <
-        2 ||
-        cleaned.length >
-        24
+        lettersOnly.length <
+        3 ||
+        lettersOnly.length >
+        14
+    ) {
+
+        return "";
+
+    }
+
+
+    if (
+        /(.)\1{3,}/i.test(
+            lettersOnly
+        )
+    ) {
+
+        return "";
+
+    }
+
+
+    const uniqueLetters =
+        new Set(
+            lettersOnly
+                .toLowerCase()
+                .split("")
+        ).size;
+
+
+    if (
+        lettersOnly.length >= 7 &&
+        uniqueLetters <= 2
+    ) {
+
+        return "";
+
+    }
+
+
+    if (
+        !/[aeiouy]/i.test(
+            lettersOnly
+        )
     ) {
 
         return "";
@@ -2655,6 +2716,112 @@ function cleanServerName(
 
 
     return cleaned;
+
+}
+
+
+// =========================================================
+// SMALL OCR NAME-DISTANCE HELPER
+// =========================================================
+
+function nameEditDistance(
+    a,
+    b
+) {
+
+    a =
+        String(
+            a || ""
+        );
+
+
+    b =
+        String(
+            b || ""
+        );
+
+
+    const rows =
+        a.length + 1;
+
+
+    const cols =
+        b.length + 1;
+
+
+    const dp =
+        Array.from(
+            {
+                length:
+                    rows
+            },
+            () =>
+                new Array(
+                    cols
+                ).fill(0)
+        );
+
+
+    for (
+        let i = 0;
+        i < rows;
+        i++
+    ) {
+
+        dp[i][0] =
+            i;
+
+    }
+
+
+    for (
+        let j = 0;
+        j < cols;
+        j++
+    ) {
+
+        dp[0][j] =
+            j;
+
+    }
+
+
+    for (
+        let i = 1;
+        i < rows;
+        i++
+    ) {
+
+        for (
+            let j = 1;
+            j < cols;
+            j++
+        ) {
+
+            const cost =
+                a[i - 1] ===
+                b[j - 1]
+                    ? 0
+                    : 1;
+
+
+            dp[i][j] =
+                Math.min(
+                    dp[i - 1][j] + 1,
+                    dp[i][j - 1] + 1,
+                    dp[i - 1][j - 1] + cost
+                );
+
+        }
+
+    }
+
+
+    return dp[
+        rows - 1
+    ][
+        cols - 1
+    ];
 
 }
 
@@ -2834,6 +3001,129 @@ function canonicalizeServerNames() {
 
             canonical =
                 shorterMatches[0];
+
+        }
+
+
+        if (
+            canonical ===
+            key
+        ) {
+
+            const fuzzyMatches =
+                keys
+                    .filter(
+                        other => {
+
+                            if (
+                                other ===
+                                key
+                            ) {
+
+                                return false;
+
+                            }
+
+
+                            const otherFrequency =
+                                frequency.get(
+                                    other
+                                ) || 0;
+
+
+                            const keyFrequency =
+                                frequency.get(
+                                    key
+                                ) || 0;
+
+
+                            if (
+                                otherFrequency <=
+                                keyFrequency
+                            ) {
+
+                                return false;
+
+                            }
+
+
+                            const distance =
+                                nameEditDistance(
+                                    key,
+                                    other
+                                );
+
+
+                            const allowed =
+                                Math.min(
+                                    key.length,
+                                    other.length
+                                ) <= 4
+                                    ? 1
+                                    : 2;
+
+
+                            return (
+                                distance <=
+                                allowed
+                            );
+
+                        }
+                    )
+                    .sort(
+                        (
+                            a,
+                            b
+                        ) => {
+
+                            const da =
+                                nameEditDistance(
+                                    key,
+                                    a
+                                );
+
+
+                            const db =
+                                nameEditDistance(
+                                    key,
+                                    b
+                                );
+
+
+                            if (
+                                da !== db
+                            ) {
+
+                                return da - db;
+
+                            }
+
+
+                            return (
+                                (
+                                    frequency.get(
+                                        b
+                                    ) || 0
+                                ) -
+                                (
+                                    frequency.get(
+                                        a
+                                    ) || 0
+                                )
+                            );
+
+                        }
+                    );
+
+
+            if (
+                fuzzyMatches.length
+            ) {
+
+                canonical =
+                    fuzzyMatches[0];
+
+            }
 
         }
 
