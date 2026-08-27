@@ -1,21 +1,21 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 9
+VERSION 10
 ============================================================
 
-Changes:
-- Detects spreadsheet grid automatically
-- Works regardless of screenshot resolution
-- Reads each time cell separately
-- Uses a time-specific OCR whitelist
-- Uses much more tolerant time parsing
-- Preserves raw OCR debug output
-- Reads server names separately
-- 1 server = ALL ROWS
-- 2 servers = split theater
-- 3rd row = conditional over-50 server
-- Sorts personal schedule chronologically
+Changes from Version 9:
+✓ Keeps working grid detection
+✓ Keeps per-cell OCR
+✓ Keeps tolerant time recognition
+✓ Merges duplicate OCR names
+✓ Removes stray one-letter OCR fragments
+✓ Normalizes capitalization
+✓ Groups server assignments under one real name
+✓ 1 server = ALL ROWS
+✓ 2 servers = split rows
+✓ 3rd server = conditional over 50
+✓ Chronological personal schedule
 ============================================================
 */
 
@@ -24,26 +24,47 @@ Changes:
 // DOM
 // =========================================================
 
-const imageInput = document.getElementById("lineupImage");
-const imagePreview = document.getElementById("imagePreview");
-const previewContainer = document.getElementById("previewContainer");
+const imageInput =
+    document.getElementById("lineupImage");
 
-const readButton = document.getElementById("readButton");
+const imagePreview =
+    document.getElementById("imagePreview");
 
-const serverSection = document.getElementById("serverSection");
-const serverSelect = document.getElementById("serverSelect");
+const previewContainer =
+    document.getElementById("previewContainer");
 
-const scheduleSection = document.getElementById("scheduleSection");
-const scheduleList = document.getElementById("scheduleList");
+const readButton =
+    document.getElementById("readButton");
 
-const scheduleName = document.getElementById("scheduleName");
-const scheduleDate = document.getElementById("scheduleDate");
+const serverSection =
+    document.getElementById("serverSection");
 
-const loading = document.getElementById("loading");
-const progressBar = document.getElementById("progressBar");
+const serverSelect =
+    document.getElementById("serverSelect");
 
-const debugSection = document.getElementById("debugSection");
-const detectedText = document.getElementById("detectedText");
+const scheduleSection =
+    document.getElementById("scheduleSection");
+
+const scheduleList =
+    document.getElementById("scheduleList");
+
+const scheduleName =
+    document.getElementById("scheduleName");
+
+const scheduleDate =
+    document.getElementById("scheduleDate");
+
+const loading =
+    document.getElementById("loading");
+
+const progressBar =
+    document.getElementById("progressBar");
+
+const debugSection =
+    document.getElementById("debugSection");
+
+const detectedText =
+    document.getElementById("detectedText");
 
 
 let uploadedFile = null;
@@ -51,7 +72,7 @@ let lineupData = [];
 
 
 // =========================================================
-// CURRENT STAR CINEMA ROW CONFIGURATIONS
+// STAR CINEMA ROW CONFIGURATIONS
 // =========================================================
 
 const theaterRows = {
@@ -108,33 +129,67 @@ const theaterRows = {
 
 
 // =========================================================
-// UPLOAD
+// IMAGE UPLOAD
 // =========================================================
 
 imageInput.addEventListener("change", () => {
 
-    uploadedFile = imageInput.files[0];
-
-    if (!uploadedFile) return;
-
-
-    const url = URL.createObjectURL(uploadedFile);
-
-    imagePreview.src = url;
-
-    imagePreview.onload = () => {
-        URL.revokeObjectURL(url);
-    };
+    uploadedFile =
+        imageInput.files[0];
 
 
-    previewContainer.classList.remove("hidden");
-    readButton.classList.remove("hidden");
+    if (!uploadedFile) {
+        return;
+    }
 
-    serverSection.classList.add("hidden");
-    scheduleSection.classList.add("hidden");
-    debugSection.classList.add("hidden");
+
+    const url =
+        URL.createObjectURL(
+            uploadedFile
+        );
+
+
+    imagePreview.src =
+        url;
+
+
+    imagePreview.onload =
+        () => {
+
+            URL.revokeObjectURL(
+                url
+            );
+
+        };
+
+
+    previewContainer
+        .classList
+        .remove("hidden");
+
+
+    readButton
+        .classList
+        .remove("hidden");
+
+
+    serverSection
+        .classList
+        .add("hidden");
+
+
+    scheduleSection
+        .classList
+        .add("hidden");
+
+
+    debugSection
+        .classList
+        .add("hidden");
+
 
     lineupData = [];
+
 });
 
 
@@ -142,509 +197,635 @@ imageInput.addEventListener("change", () => {
 // READ LINEUP
 // =========================================================
 
-readButton.addEventListener("click", async () => {
+readButton.addEventListener(
+    "click",
+    async () => {
 
-    if (!uploadedFile) {
-        alert("Upload a lineup screenshot first.");
-        return;
-    }
+        if (!uploadedFile) {
 
-
-    readButton.disabled = true;
-    readButton.textContent = "Detecting Spreadsheet...";
-
-    loading.classList.remove("hidden");
-    progressBar.style.width = "0%";
-
-    serverSection.classList.add("hidden");
-    scheduleSection.classList.add("hidden");
-
-    debugSection.classList.remove("hidden");
-    detectedText.textContent = "Loading image...\n";
-
-
-    try {
-
-        const image = await loadImage(uploadedFile);
-
-        detectedText.textContent +=
-            `Image: ${image.width} x ${image.height}\n`;
-
-
-        const analysis = createAnalysisCanvas(image);
-
-
-        // ---------------------------------------------
-        // Detect the 5 showing columns
-        // ---------------------------------------------
-
-        const columns = detectShowingColumns(analysis);
-
-        detectedText.textContent +=
-            `Showing column edges: ${columns.length}\n`;
-
-
-        if (columns.length !== 6) {
-
-            throw new Error(
-                `Expected 6 column edges, found ${columns.length}.`
+            alert(
+                "Upload a lineup screenshot first."
             );
+
+            return;
+
         }
 
 
-        // ---------------------------------------------
-        // Detect all horizontal cell boundaries
-        // ---------------------------------------------
-
-        const rows = detectTheaterGrid(
-            analysis,
-            columns[0],
-            columns[5]
-        );
+        readButton.disabled =
+            true;
 
 
-        detectedText.textContent +=
-            `Horizontal grid lines: ${rows.length}\n`;
+        readButton.textContent =
+            "Detecting Spreadsheet...";
 
 
-        if (rows.length !== 41) {
-
-            throw new Error(
-                `Expected 41 horizontal lines, found ${rows.length}.`
-            );
-        }
+        loading
+            .classList
+            .remove("hidden");
 
 
-        detectedText.textContent +=
-            "\nGrid detection successful.\n";
+        progressBar.style.width =
+            "0%";
 
 
-        // ---------------------------------------------
-        // OCR worker
-        // ---------------------------------------------
-
-        readButton.textContent = "Starting OCR...";
+        serverSection
+            .classList
+            .add("hidden");
 
 
-        const worker = await Tesseract.createWorker(
-            "eng",
-            1
-        );
+        scheduleSection
+            .classList
+            .add("hidden");
 
 
-        // ---------------------------------------------
-        // FIRST PASS:
-        // Read only the 40 time cells.
-        // ---------------------------------------------
-
-        await worker.setParameters({
-
-            tessedit_pageseg_mode:
-                Tesseract.PSM?.SINGLE_LINE || 7,
-
-            tessedit_char_whitelist:
-                "0123456789:.-apmAPM"
-
-        });
+        debugSection
+            .classList
+            .remove("hidden");
 
 
-        detectedText.textContent +=
-            "\nTIME CELL OCR\n";
-        detectedText.textContent +=
-            "====================================\n";
+        detectedText.textContent =
+            "Loading image...\n";
 
 
-        const detectedShowings = [];
+        try {
 
-        let counter = 0;
-
-
-        for (
-            let theater = 1;
-            theater <= 8;
-            theater++
-        ) {
-
-            const base =
-                (theater - 1) * 5;
+            const image =
+                await loadImage(
+                    uploadedFile
+                );
 
 
-            const timeTop =
-                rows[base + 1];
-
-            const timeBottom =
-                rows[base + 2];
+            detectedText.textContent +=
+                `Image: ${image.width} x ${image.height}\n`;
 
 
-            for (
-                let column = 0;
-                column < 5;
-                column++
+            const analysis =
+                createAnalysisCanvas(
+                    image
+                );
+
+
+            // ---------------------------------------------
+            // DETECT SHOWING COLUMNS
+            // ---------------------------------------------
+
+            const columns =
+                detectShowingColumns(
+                    analysis
+                );
+
+
+            detectedText.textContent +=
+                `Showing column edges: ${columns.length}\n`;
+
+
+            if (
+                columns.length !== 6
             ) {
 
-                counter++;
+                throw new Error(
+                    `Expected 6 column edges, found ${columns.length}.`
+                );
 
-
-                readButton.textContent =
-                    `Reading times ${counter}/40...`;
-
-
-                progressBar.style.width =
-                    `${(counter / 40) * 50}%`;
-
-
-                const left =
-                    columns[column];
-
-                const right =
-                    columns[column + 1];
-
-
-                const raw =
-                    await ocrCell(
-                        worker,
-                        image,
-                        left,
-                        timeTop,
-                        right,
-                        timeBottom,
-                        "time"
-                    );
-
-
-                const normalized =
-                    normalizeTimeOCR(raw);
-
-
-                const parsed =
-                    parseShowtime(normalized);
-
-
-                detectedText.textContent +=
-                    `T${theater} C${column + 1}: ` +
-                    `"${raw || "(blank)"}"`;
-
-
-                if (normalized !== raw) {
-
-                    detectedText.textContent +=
-                        ` -> "${normalized}"`;
-                }
-
-
-                if (parsed) {
-
-                    detectedText.textContent +=
-                        "  ✓";
-                }
-
-                else {
-
-                    detectedText.textContent +=
-                        "  ✗";
-                }
-
-
-                detectedText.textContent +=
-                    "\n";
-
-
-                if (!parsed) {
-                    continue;
-                }
-
-
-                detectedShowings.push({
-
-                    theater,
-
-                    column,
-
-                    left,
-
-                    right,
-
-                    base,
-
-                    ...parsed,
-
-                    servers: [],
-
-                    rules:
-                        theaterRows[theater],
-
-                    rawTime:
-                        raw
-                });
             }
-        }
 
 
-        detectedText.textContent +=
-            `\nValid showings found: ${detectedShowings.length}\n`;
+            // ---------------------------------------------
+            // DETECT HORIZONTAL GRID
+            // ---------------------------------------------
+
+            const rows =
+                detectTheaterGrid(
+                    analysis,
+                    columns[0],
+                    columns[5]
+                );
 
 
-        // ---------------------------------------------
-        // SECOND PASS:
-        // Read server cells only where a showing exists.
-        // ---------------------------------------------
-
-        await worker.setParameters({
-
-            tessedit_pageseg_mode:
-                Tesseract.PSM?.SINGLE_LINE || 7,
-
-            tessedit_char_whitelist:
-                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'()-"
-
-        });
+            detectedText.textContent +=
+                `Horizontal grid lines: ${rows.length}\n`;
 
 
-        detectedText.textContent +=
-            "\nSERVER OCR\n";
-        detectedText.textContent +=
-            "====================================\n";
+            if (
+                rows.length !== 41
+            ) {
+
+                throw new Error(
+                    `Expected 41 horizontal lines, found ${rows.length}.`
+                );
+
+            }
 
 
-        let serverCounter = 0;
-
-        const totalServerCells =
-            detectedShowings.length * 3;
+            detectedText.textContent +=
+                "\nGrid detection successful.\n";
 
 
-        for (const showing of detectedShowings) {
+            // ---------------------------------------------
+            // CREATE OCR WORKER
+            // ---------------------------------------------
 
-            const base =
-                showing.base;
+            readButton.textContent =
+                "Starting OCR...";
 
 
-            const serverBounds = [
+            const worker =
+                await Tesseract.createWorker(
+                    "eng",
+                    1
+                );
 
-                [
-                    rows[base + 2],
-                    rows[base + 3]
-                ],
 
-                [
-                    rows[base + 3],
-                    rows[base + 4]
-                ],
+            // ---------------------------------------------
+            // TIME OCR
+            // ---------------------------------------------
 
-                [
-                    rows[base + 4],
-                    rows[base + 5]
-                ]
+            await worker.setParameters({
 
-            ];
+                tessedit_pageseg_mode:
+                    Tesseract.PSM?.SINGLE_LINE || 7,
+
+                tessedit_char_whitelist:
+                    "0123456789:.-apmAPM"
+
+            });
+
+
+            detectedText.textContent +=
+                "\nTIME CELL OCR\n";
+
+            detectedText.textContent +=
+                "====================================\n";
+
+
+            const detectedShowings =
+                [];
+
+
+            let counter =
+                0;
 
 
             for (
-                let position = 0;
-                position < 3;
-                position++
+                let theater = 1;
+                theater <= 8;
+                theater++
             ) {
 
-                serverCounter++;
+                const base =
+                    (
+                        theater - 1
+                    ) * 5;
 
 
-                readButton.textContent =
-                    `Reading names ${serverCounter}/${totalServerCells}...`;
+                const timeTop =
+                    rows[
+                        base + 1
+                    ];
 
 
-                const secondHalfProgress =
-                    totalServerCells
-                        ? (
-                            serverCounter /
-                            totalServerCells
-                        ) * 50
-                        : 50;
+                const timeBottom =
+                    rows[
+                        base + 2
+                    ];
 
 
-                progressBar.style.width =
-                    `${50 + secondHalfProgress}%`;
+                for (
+                    let column = 0;
+                    column < 5;
+                    column++
+                ) {
+
+                    counter++;
 
 
-                const [top, bottom] =
-                    serverBounds[position];
+                    readButton.textContent =
+                        `Reading times ${counter}/40...`;
 
 
-                const raw =
-                    await ocrCell(
-                        worker,
-                        image,
-                        showing.left,
-                        top,
-                        showing.right,
-                        bottom,
-                        "name"
-                    );
+                    progressBar.style.width =
+                        `${(counter / 40) * 50}%`;
 
 
-                const name =
-                    cleanServerName(raw);
+                    const left =
+                        columns[
+                            column
+                        ];
 
 
-                if (raw) {
+                    const right =
+                        columns[
+                            column + 1
+                        ];
+
+
+                    const raw =
+                        await ocrCell(
+                            worker,
+                            image,
+                            left,
+                            timeTop,
+                            right,
+                            timeBottom,
+                            "time"
+                        );
+
+
+                    const normalized =
+                        normalizeTimeOCR(
+                            raw
+                        );
+
+
+                    const parsed =
+                        parseShowtime(
+                            normalized
+                        );
+
 
                     detectedText.textContent +=
-
-                        `T${showing.theater} ` +
-                        `${showing.start} ` +
-                        `row ${position + 1}: ` +
-                        `"${raw}"`;
+                        `T${theater} C${column + 1}: "${raw || "(blank)"}"`;
 
 
-                    if (name) {
+                    if (
+                        normalized !== raw
+                    ) {
 
                         detectedText.textContent +=
-                            ` -> ${name}`;
+                            ` -> "${normalized}"`;
+
                     }
 
 
                     detectedText.textContent +=
-                        "\n";
+                        parsed
+                            ? "  ✓\n"
+                            : "  ✗\n";
+
+
+                    if (!parsed) {
+                        continue;
+                    }
+
+
+                    detectedShowings.push({
+
+                        theater,
+
+                        column,
+
+                        left,
+
+                        right,
+
+                        base,
+
+                        ...parsed,
+
+                        servers: [],
+
+                        rules:
+                            theaterRows[
+                                theater
+                            ],
+
+                        rawTime:
+                            raw
+
+                    });
+
                 }
 
-
-                if (!name) {
-                    continue;
-                }
-
-
-                showing.servers.push({
-
-                    name,
-
-                    position:
-                        position + 1,
-
-                    conditional:
-                        position === 2,
-
-                    rows:
-                        "",
-
-                    over50:
-                        ""
-                });
             }
+
+
+            detectedText.textContent +=
+                `\nValid showings found: ${detectedShowings.length}\n`;
+
+
+            // ---------------------------------------------
+            // SERVER NAME OCR
+            // ---------------------------------------------
+
+            await worker.setParameters({
+
+                tessedit_pageseg_mode:
+                    Tesseract.PSM?.SINGLE_LINE || 7,
+
+                tessedit_char_whitelist:
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'()-"
+
+            });
+
+
+            detectedText.textContent +=
+                "\nSERVER OCR\n";
+
+            detectedText.textContent +=
+                "====================================\n";
+
+
+            let serverCounter =
+                0;
+
+
+            const totalServerCells =
+                detectedShowings.length *
+                3;
+
+
+            for (
+                const showing of
+                detectedShowings
+            ) {
+
+                const base =
+                    showing.base;
+
+
+                const serverBounds = [
+
+                    [
+                        rows[base + 2],
+                        rows[base + 3]
+                    ],
+
+                    [
+                        rows[base + 3],
+                        rows[base + 4]
+                    ],
+
+                    [
+                        rows[base + 4],
+                        rows[base + 5]
+                    ]
+
+                ];
+
+
+                for (
+                    let position = 0;
+                    position < 3;
+                    position++
+                ) {
+
+                    serverCounter++;
+
+
+                    readButton.textContent =
+                        `Reading names ${serverCounter}/${totalServerCells}...`;
+
+
+                    const secondHalfProgress =
+                        totalServerCells
+                            ? (
+                                serverCounter /
+                                totalServerCells
+                            ) * 50
+                            : 50;
+
+
+                    progressBar.style.width =
+                        `${50 + secondHalfProgress}%`;
+
+
+                    const [
+                        top,
+                        bottom
+                    ] =
+                        serverBounds[
+                            position
+                        ];
+
+
+                    const raw =
+                        await ocrCell(
+                            worker,
+                            image,
+                            showing.left,
+                            top,
+                            showing.right,
+                            bottom,
+                            "name"
+                        );
+
+
+                    const name =
+                        cleanServerName(
+                            raw
+                        );
+
+
+                    if (raw) {
+
+                        detectedText.textContent +=
+
+                            `T${showing.theater} ` +
+                            `${showing.start} ` +
+                            `row ${position + 1}: ` +
+                            `"${raw}"`;
+
+
+                        if (name) {
+
+                            detectedText.textContent +=
+                                ` -> ${name}`;
+
+                        }
+
+
+                        detectedText.textContent +=
+                            "\n";
+
+                    }
+
+
+                    if (!name) {
+                        continue;
+                    }
+
+
+                    showing.servers.push({
+
+                        name,
+
+                        position:
+                            position + 1,
+
+                        conditional:
+                            position === 2,
+
+                        rows:
+                            "",
+
+                        over50:
+                            ""
+
+                    });
+
+                }
+
+            }
+
+
+            await worker.terminate();
+
+
+            lineupData =
+                detectedShowings;
+
+
+            // ---------------------------------------------
+            // IMPORTANT VERSION 10 STEP:
+            // MERGE DUPLICATE NAMES
+            // ---------------------------------------------
+
+            canonicalizeServerNames();
+
+
+            // ---------------------------------------------
+            // APPLY ROW RULES
+            // ---------------------------------------------
+
+            lineupData.forEach(
+                applyAssignmentRules
+            );
+
+
+            populateServers();
+
+
+            appendDetectedLineup();
+
+
+            if (!lineupData.length) {
+
+                alert(
+                    "The grid was detected, but no showtimes could be read."
+                );
+
+            }
+
+            else {
+
+                serverSection
+                    .classList
+                    .remove("hidden");
+
+
+                serverSection
+                    .scrollIntoView({
+                        behavior: "smooth"
+                    });
+
+            }
+
         }
 
+        catch (error) {
 
-        await worker.terminate();
-
-
-        lineupData =
-            detectedShowings;
-
-
-        // ---------------------------------------------
-        // Apply scheduling rules
-        // ---------------------------------------------
-
-        lineupData.forEach(
-            applyAssignmentRules
-        );
+            console.error(
+                error
+            );
 
 
-        populateServers();
+            detectedText.textContent +=
+                "\n\nERROR\n";
+
+            detectedText.textContent +=
+                "====================================\n";
 
 
-        // ---------------------------------------------
-        // Add final interpretation WITHOUT deleting
-        // our OCR debug text.
-        // ---------------------------------------------
+            detectedText.textContent +=
+                error?.stack ||
+                error?.message ||
+                String(error);
 
-        appendDetectedLineup();
-
-
-        if (!lineupData.length) {
 
             alert(
-                "The grid was detected, but no showtimes could be read. Scroll down to the time-cell OCR results."
+                "There was a problem reading the lineup. Scroll down to Detected Text."
             );
 
         }
 
-        else {
 
-            serverSection.classList.remove("hidden");
+        loading
+            .classList
+            .add("hidden");
 
-            serverSection.scrollIntoView({
-                behavior: "smooth"
-            });
-        }
+
+        readButton.disabled =
+            false;
+
+
+        readButton.textContent =
+            "Read Lineup";
 
     }
-
-    catch (error) {
-
-        console.error(error);
-
-
-        detectedText.textContent +=
-            "\n\nERROR\n";
-        detectedText.textContent +=
-            "====================================\n";
-
-        detectedText.textContent +=
-            error?.stack ||
-            error?.message ||
-            String(error);
-
-
-        alert(
-            "There was a problem reading the lineup. Scroll down to Detected Text."
-        );
-    }
-
-
-    loading.classList.add("hidden");
-
-    readButton.disabled = false;
-    readButton.textContent = "Read Lineup";
-
-});
+);
 
 
 // =========================================================
-// IMAGE
+// IMAGE LOADING
 // =========================================================
 
 function loadImage(file) {
 
     return new Promise(
-        (resolve, reject) => {
+        (
+            resolve,
+            reject
+        ) => {
 
-            const image = new Image();
+            const image =
+                new Image();
+
 
             const url =
-                URL.createObjectURL(file);
-
-
-            image.onload = () => {
-
-                URL.revokeObjectURL(url);
-
-                resolve(image);
-            };
-
-
-            image.onerror = () => {
-
-                URL.revokeObjectURL(url);
-
-                reject(
-                    new Error(
-                        "Could not load image."
-                    )
+                URL.createObjectURL(
+                    file
                 );
-            };
 
 
-            image.src = url;
+            image.onload =
+                () => {
+
+                    URL.revokeObjectURL(
+                        url
+                    );
+
+
+                    resolve(
+                        image
+                    );
+
+                };
+
+
+            image.onerror =
+                () => {
+
+                    URL.revokeObjectURL(
+                        url
+                    );
+
+
+                    reject(
+                        new Error(
+                            "Could not load image."
+                        )
+                    );
+
+                };
+
+
+            image.src =
+                url;
+
         }
     );
+
 }
 
 
@@ -652,14 +833,19 @@ function loadImage(file) {
 // ANALYSIS CANVAS
 // =========================================================
 
-function createAnalysisCanvas(image) {
+function createAnalysisCanvas(
+    image
+) {
 
     const canvas =
-        document.createElement("canvas");
+        document.createElement(
+            "canvas"
+        );
 
 
     canvas.width =
         image.width;
+
 
     canvas.height =
         image.height;
@@ -669,7 +855,8 @@ function createAnalysisCanvas(image) {
         canvas.getContext(
             "2d",
             {
-                willReadFrequently: true
+                willReadFrequently:
+                    true
             }
         );
 
@@ -700,12 +887,14 @@ function createAnalysisCanvas(image) {
 
         height:
             canvas.height
+
     };
+
 }
 
 
 // =========================================================
-// BRIGHTNESS
+// PIXEL BRIGHTNESS
 // =========================================================
 
 function brightnessAt(
@@ -749,6 +938,7 @@ function brightnessAt(
         analysis.data[i + 2]
 
     ) / 3;
+
 }
 
 
@@ -760,7 +950,8 @@ function detectShowingColumns(
     analysis
 ) {
 
-    const candidates = [];
+    const candidates =
+        [];
 
 
     const yStart =
@@ -781,8 +972,10 @@ function detectShowingColumns(
         Math.max(
             1,
             Math.floor(
-                (yEnd - yStart) /
-                2
+                (
+                    yEnd -
+                    yStart
+                ) / 2
             )
         );
 
@@ -793,7 +986,8 @@ function detectShowingColumns(
         x++
     ) {
 
-        let dark = 0;
+        let dark =
+            0;
 
 
         for (
@@ -811,7 +1005,9 @@ function detectShowingColumns(
             ) {
 
                 dark++;
+
             }
+
         }
 
 
@@ -821,8 +1017,12 @@ function detectShowingColumns(
             0.68
         ) {
 
-            candidates.push(x);
+            candidates.push(
+                x
+            );
+
         }
+
     }
 
 
@@ -847,19 +1047,33 @@ function detectShowingColumns(
         );
 
 
-    return findBestColumnSet(lines);
+    return findBestColumnSet(
+        lines
+    );
+
 }
 
 
-function findBestColumnSet(lines) {
+function findBestColumnSet(
+    lines
+) {
 
-    if (lines.length < 6) {
+    if (
+        lines.length <
+        6
+    ) {
+
         return [];
+
     }
 
 
-    let best = null;
-    let bestScore = Infinity;
+    let best =
+        null;
+
+
+    let bestScore =
+        Infinity;
 
 
     for (
@@ -876,7 +1090,8 @@ function findBestColumnSet(lines) {
             );
 
 
-        const gaps = [];
+        const gaps =
+            [];
 
 
         for (
@@ -889,30 +1104,42 @@ function findBestColumnSet(lines) {
                 set[i + 1] -
                 set[i]
             );
+
         }
 
 
         const average =
             gaps.reduce(
-                (a, b) =>
+                (
+                    a,
+                    b
+                ) =>
                     a + b,
                 0
             ) /
             gaps.length;
 
 
-        if (average <= 0) {
+        if (
+            average <= 0
+        ) {
+
             continue;
+
         }
 
 
         const variance =
             gaps.reduce(
-                (sum, gap) => {
+                (
+                    sum,
+                    gap
+                ) => {
 
                     const d =
                         gap -
                         average;
+
 
                     return (
                         sum +
@@ -926,28 +1153,42 @@ function findBestColumnSet(lines) {
 
 
         const score =
-            Math.sqrt(variance) /
+            Math.sqrt(
+                variance
+            ) /
             average;
 
 
-        if (score < bestScore) {
+        if (
+            score <
+            bestScore
+        ) {
 
-            bestScore = score;
-            best = set;
+            bestScore =
+                score;
+
+
+            best =
+                set;
+
         }
+
     }
 
 
     if (
         !best ||
-        bestScore > 0.15
+        bestScore >
+        0.15
     ) {
 
         return [];
+
     }
 
 
     return best;
+
 }
 
 
@@ -961,7 +1202,8 @@ function detectTheaterGrid(
     right
 ) {
 
-    const candidates = [];
+    const candidates =
+        [];
 
 
     const xStart =
@@ -980,8 +1222,10 @@ function detectTheaterGrid(
         Math.max(
             1,
             Math.floor(
-                (xEnd - xStart) /
-                2
+                (
+                    xEnd -
+                    xStart
+                ) / 2
             )
         );
 
@@ -992,7 +1236,8 @@ function detectTheaterGrid(
         y++
     ) {
 
-        let dark = 0;
+        let dark =
+            0;
 
 
         for (
@@ -1010,7 +1255,9 @@ function detectTheaterGrid(
             ) {
 
                 dark++;
+
             }
+
         }
 
 
@@ -1020,8 +1267,12 @@ function detectTheaterGrid(
             0.60
         ) {
 
-            candidates.push(y);
+            candidates.push(
+                y
+            );
+
         }
+
     }
 
 
@@ -1046,19 +1297,33 @@ function detectTheaterGrid(
         );
 
 
-    return findBestTheaterGrid(lines);
+    return findBestTheaterGrid(
+        lines
+    );
+
 }
 
 
-function findBestTheaterGrid(lines) {
+function findBestTheaterGrid(
+    lines
+) {
 
-    if (lines.length < 41) {
+    if (
+        lines.length <
+        41
+    ) {
+
         return [];
+
     }
 
 
-    let best = null;
-    let bestScore = Infinity;
+    let best =
+        null;
+
+
+    let bestScore =
+        Infinity;
 
 
     for (
@@ -1075,9 +1340,12 @@ function findBestTheaterGrid(lines) {
             );
 
 
-        const gaps = [];
+        const gaps =
+            [];
 
-        let valid = true;
+
+        let valid =
+            true;
 
 
         for (
@@ -1091,14 +1359,23 @@ function findBestTheaterGrid(lines) {
                 set[i];
 
 
-            if (gap <= 0) {
+            if (
+                gap <= 0
+            ) {
 
-                valid = false;
+                valid =
+                    false;
+
+
                 break;
+
             }
 
 
-            gaps.push(gap);
+            gaps.push(
+                gap
+            );
+
         }
 
 
@@ -1107,48 +1384,68 @@ function findBestTheaterGrid(lines) {
         }
 
 
-        const movieGaps = [];
-        const smallGaps = [];
+        const movieGaps =
+            [];
+
+
+        const smallGaps =
+            [];
 
 
         gaps.forEach(
-            (gap, index) => {
+            (
+                gap,
+                index
+            ) => {
 
                 if (
                     index % 5 === 0
                 ) {
 
-                    movieGaps.push(gap);
+                    movieGaps.push(
+                        gap
+                    );
 
                 }
 
                 else {
 
-                    smallGaps.push(gap);
+                    smallGaps.push(
+                        gap
+                    );
+
                 }
+
             }
         );
 
 
         const movieMedian =
-            median(movieGaps);
+            median(
+                movieGaps
+            );
 
 
         const smallMedian =
-            median(smallGaps);
+            median(
+                smallGaps
+            );
 
 
         if (
             !smallMedian ||
             movieMedian <
-            smallMedian * 1.35
+            smallMedian *
+            1.35
         ) {
 
             continue;
+
         }
 
 
-        let score = 0;
+        let score =
+            0;
 
 
         movieGaps.forEach(
@@ -1160,6 +1457,7 @@ function findBestTheaterGrid(lines) {
                         movieMedian
                     ) /
                     movieMedian;
+
             }
         );
 
@@ -1173,24 +1471,38 @@ function findBestTheaterGrid(lines) {
                         smallMedian
                     ) /
                     smallMedian;
+
             }
         );
 
 
-        if (score < bestScore) {
+        if (
+            score <
+            bestScore
+        ) {
 
-            bestScore = score;
-            best = set;
+            bestScore =
+                score;
+
+
+            best =
+                set;
+
         }
+
     }
 
 
-    return best || [];
+    return (
+        best ||
+        []
+    );
+
 }
 
 
 // =========================================================
-// CLUSTER LINES
+// CLUSTER GRID LINES
 // =========================================================
 
 function clusterPositions(
@@ -1198,23 +1510,34 @@ function clusterPositions(
     maximumGap
 ) {
 
-    if (!values.length) {
+    if (
+        !values.length
+    ) {
+
         return [];
+
     }
 
 
     const sorted =
-        [...values].sort(
-            (a, b) =>
-                a - b
-        );
+        [...values]
+            .sort(
+                (
+                    a,
+                    b
+                ) =>
+                    a - b
+            );
 
 
-    const clusters = [];
+    const clusters =
+        [];
 
-    let current = [
-        sorted[0]
-    ];
+
+    let current =
+        [
+            sorted[0]
+        ];
 
 
     for (
@@ -1237,43 +1560,65 @@ function clusterPositions(
 
         else {
 
-            clusters.push(current);
+            clusters.push(
+                current
+            );
 
-            current = [
-                sorted[i]
-            ];
+
+            current =
+                [
+                    sorted[i]
+                ];
+
         }
+
     }
 
 
-    clusters.push(current);
+    clusters.push(
+        current
+    );
 
 
     return clusters.map(
         cluster =>
 
             cluster.reduce(
-                (sum, v) =>
-                    sum + v,
+                (
+                    sum,
+                    value
+                ) =>
+                    sum + value,
                 0
             ) /
             cluster.length
     );
+
 }
 
 
-function median(values) {
+function median(
+    values
+) {
 
-    if (!values.length) {
+    if (
+        !values.length
+    ) {
+
         return 0;
+
     }
 
 
     const sorted =
-        [...values].sort(
-            (a, b) =>
-                a - b
-        );
+        [...values]
+            .sort(
+                (
+                    a,
+                    b
+                ) =>
+                    a - b
+            );
 
 
     const middle =
@@ -1284,19 +1629,29 @@ function median(values) {
 
 
     if (
-        sorted.length % 2
+        sorted.length %
+        2
     ) {
 
-        return sorted[middle];
+        return sorted[
+            middle
+        ];
+
     }
 
 
     return (
 
-        sorted[middle - 1] +
-        sorted[middle]
+        sorted[
+            middle - 1
+        ] +
+
+        sorted[
+            middle
+        ]
 
     ) / 2;
+
 }
 
 
@@ -1315,53 +1670,52 @@ async function ocrCell(
 ) {
 
     const cellWidth =
-        right - left;
+        right -
+        left;
 
 
     const cellHeight =
-        bottom - top;
+        bottom -
+        top;
 
-
-    /*
-    Remove grid borders, but don't cut into
-    characters near the edges.
-    */
 
     const insetX =
         Math.max(
             1,
-            cellWidth * 0.015
+            cellWidth *
+            0.015
         );
 
 
     const insetY =
         Math.max(
             1,
-            cellHeight * 0.04
+            cellHeight *
+            0.04
         );
 
 
     const sourceX =
-        left + insetX;
+        left +
+        insetX;
 
 
     const sourceY =
-        top + insetY;
+        top +
+        insetY;
 
 
     const sourceWidth =
         cellWidth -
-        insetX * 2;
+        insetX *
+        2;
 
 
     const sourceHeight =
         cellHeight -
-        insetY * 2;
+        insetY *
+        2;
 
-
-    /*
-    Bigger scale for tiny spreadsheet text.
-    */
 
     const scale =
         type === "time"
@@ -1386,7 +1740,8 @@ async function ocrCell(
             sourceWidth *
             scale
         ) +
-        padding * 2;
+        padding *
+        2;
 
 
     canvas.height =
@@ -1394,19 +1749,23 @@ async function ocrCell(
             sourceHeight *
             scale
         ) +
-        padding * 2;
+        padding *
+        2;
 
 
     const ctx =
         canvas.getContext(
             "2d",
             {
-                willReadFrequently: true
+                willReadFrequently:
+                    true
             }
         );
 
 
-    ctx.fillStyle = "white";
+    ctx.fillStyle =
+        "white";
+
 
     ctx.fillRect(
         0,
@@ -1415,11 +1774,6 @@ async function ocrCell(
         canvas.height
     );
 
-
-    /*
-    Important:
-    smoothing ON helps enlarged text.
-    */
 
     ctx.imageSmoothingEnabled =
         true;
@@ -1437,22 +1791,14 @@ async function ocrCell(
         padding,
         padding,
 
-        sourceWidth * scale,
-        sourceHeight * scale
+        sourceWidth *
+        scale,
+
+        sourceHeight *
+        scale
+
     );
 
-
-    /*
-    Grayscale + contrast.
-
-    Version 8 used a very aggressive pure
-    black/white threshold.
-
-    That could destroy the colon and thin parts
-    of the numbers.
-
-    Version 9 keeps grayscale information.
-    */
 
     const imageData =
         ctx.getImageData(
@@ -1474,24 +1820,22 @@ async function ocrCell(
     ) {
 
         const gray =
+
             (
                 0.299 *
                 pixels[i]
             ) +
+
             (
                 0.587 *
                 pixels[i + 1]
             ) +
+
             (
                 0.114 *
                 pixels[i + 2]
             );
 
-
-        /*
-        Increase contrast without destroying
-        anti-aliased character edges.
-        */
 
         let adjusted =
             (
@@ -1512,9 +1856,17 @@ async function ocrCell(
             );
 
 
-        pixels[i] = adjusted;
-        pixels[i + 1] = adjusted;
-        pixels[i + 2] = adjusted;
+        pixels[i] =
+            adjusted;
+
+
+        pixels[i + 1] =
+            adjusted;
+
+
+        pixels[i + 2] =
+            adjusted;
+
     }
 
 
@@ -1548,14 +1900,17 @@ async function ocrCell(
             " "
         )
         .trim();
+
 }
 
 
 // =========================================================
-// NORMALIZE TIME OCR
+// TIME OCR NORMALIZATION
 // =========================================================
 
-function normalizeTimeOCR(value) {
+function normalizeTimeOCR(
+    value
+) {
 
     if (!value) {
         return "";
@@ -1568,20 +1923,12 @@ function normalizeTimeOCR(value) {
             .toLowerCase();
 
 
-    /*
-    Common dash characters.
-    */
-
     text =
         text.replace(
             /[–—−_]/g,
             "-"
         );
 
-
-    /*
-    Common OCR punctuation mistakes.
-    */
 
     text =
         text
@@ -1595,20 +1942,12 @@ function normalizeTimeOCR(value) {
             );
 
 
-    /*
-    O → 0 around numbers.
-    */
-
     text =
         text.replace(
             /[oO]/g,
             "0"
         );
 
-
-    /*
-    l / I / | → 1 around time text.
-    */
 
     text =
         text.replace(
@@ -1617,20 +1956,12 @@ function normalizeTimeOCR(value) {
         );
 
 
-    /*
-    Remove spaces.
-    */
-
     text =
         text.replace(
             /\s+/g,
             ""
         );
 
-
-    /*
-    Remove obvious OCR junk.
-    */
 
     text =
         text.replace(
@@ -1639,23 +1970,12 @@ function normalizeTimeOCR(value) {
         );
 
 
-    /*
-    Period often substitutes for colon.
-    */
-
     text =
         text.replace(
             /\.(?=\d{2})/g,
             ":"
         );
 
-
-    /*
-    If OCR loses the colon:
-
-    1100 -> 11:00
-    105 -> 1:05
-    */
 
     text =
         text.replace(
@@ -1671,13 +1991,6 @@ function normalizeTimeOCR(value) {
         );
 
 
-    /*
-    Sometimes OCR loses the dash but recognizes
-    two times.
-
-    11:00a1:00p
-    */
-
     text =
         text.replace(
             /(\d{1,2}:\d{2}[ap]m?)(\d{1,2}:\d{2})/,
@@ -1686,14 +1999,17 @@ function normalizeTimeOCR(value) {
 
 
     return text;
+
 }
 
 
 // =========================================================
-// PARSE SHOWTIME
+// SHOWTIME PARSER
 // =========================================================
 
-function parseShowtime(value) {
+function parseShowtime(
+    value
+) {
 
     if (!value) {
         return null;
@@ -1712,17 +2028,27 @@ function parseShowtime(value) {
 
 
     const startHour =
-        Number(match[1]);
+        Number(
+            match[1]
+        );
+
 
     const startMinute =
-        Number(match[2]);
+        Number(
+            match[2]
+        );
 
 
     const endHour =
-        Number(match[4]);
+        Number(
+            match[4]
+        );
+
 
     const endMinute =
-        Number(match[5]);
+        Number(
+            match[5]
+        );
 
 
     if (
@@ -1737,6 +2063,7 @@ function parseShowtime(value) {
     ) {
 
         return null;
+
     }
 
 
@@ -1752,10 +2079,6 @@ function parseShowtime(value) {
         );
 
 
-    // ---------------------------------------------
-    // Infer start AM/PM
-    // ---------------------------------------------
-
     if (!startPeriod) {
 
         if (
@@ -1763,46 +2086,36 @@ function parseShowtime(value) {
             startHour === 11
         ) {
 
-            startPeriod = "AM";
+            startPeriod =
+                "AM";
 
         }
 
         else {
 
-            startPeriod = "PM";
+            startPeriod =
+                "PM";
+
         }
+
     }
 
 
-    // ---------------------------------------------
-    // Infer end AM/PM
-    // ---------------------------------------------
-
     if (!endPeriod) {
-
-        /*
-        Morning show crossing noon.
-
-        11:00 -> 1:00
-        */
 
         if (
             startPeriod === "AM" &&
             (
                 endHour === 12 ||
-                endHour < startHour
+                endHour <
+                startHour
             )
         ) {
 
-            endPeriod = "PM";
+            endPeriod =
+                "PM";
 
         }
-
-        /*
-        Late show crossing midnight.
-
-        10:35 PM -> 12:35 AM
-        */
 
         else if (
             startPeriod === "PM" &&
@@ -1813,7 +2126,8 @@ function parseShowtime(value) {
             )
         ) {
 
-            endPeriod = "AM";
+            endPeriod =
+                "AM";
 
         }
 
@@ -1821,7 +2135,9 @@ function parseShowtime(value) {
 
             endPeriod =
                 startPeriod;
+
         }
+
     }
 
 
@@ -1847,7 +2163,9 @@ function parseShowtime(value) {
     ) {
 
         endMinutes +=
-            24 * 60;
+            24 *
+            60;
+
     }
 
 
@@ -1870,15 +2188,19 @@ function parseShowtime(value) {
         startMinutes,
 
         endMinutes
+
     };
+
 }
 
 
 // =========================================================
-// SERVER NAME CLEANUP
+// RAW SERVER NAME CLEANUP
 // =========================================================
 
-function cleanServerName(value) {
+function cleanServerName(
+    value
+) {
 
     if (!value) {
         return "";
@@ -1889,11 +2211,11 @@ function cleanServerName(value) {
         value
             .replace(
                 /[()[\]{}|]/g,
-                ""
+                " "
             )
             .replace(
                 /[^A-Za-zÀ-ÿ' -]/g,
-                ""
+                " "
             )
             .replace(
                 /\s+/g,
@@ -1903,26 +2225,50 @@ function cleanServerName(value) {
 
 
     if (
-        cleaned.length < 2 ||
-        cleaned.length > 24
+        cleaned.length <
+        2 ||
+        cleaned.length >
+        30
     ) {
 
         return "";
-    }
 
-
-    if (
-        cleaned
-            .split(" ")
-            .length > 2
-    ) {
-
-        return "";
     }
 
 
     /*
-    Don't let OCR row codes become names.
+    Normalize capitalization.
+    */
+
+    cleaned =
+        cleaned
+            .split(" ")
+            .map(
+                word => {
+
+                    if (!word) {
+                        return "";
+                    }
+
+
+                    return (
+                        word
+                            .charAt(0)
+                            .toUpperCase() +
+
+                        word
+                            .slice(1)
+                            .toLowerCase()
+                    );
+
+                }
+            )
+            .filter(Boolean)
+            .join(" ");
+
+
+    /*
+    Don't treat row codes as names.
     */
 
     if (
@@ -1932,11 +2278,571 @@ function cleanServerName(value) {
     ) {
 
         return "";
+
     }
 
 
-    return cleaned
-        .split(" ")
+    return cleaned;
+
+}
+
+
+// =========================================================
+// VERSION 10 NAME NORMALIZATION
+// =========================================================
+
+function canonicalizeServerNames() {
+
+    const rawNames =
+        [];
+
+
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
+                server => {
+
+                    if (
+                        server.name
+                    ) {
+
+                        rawNames.push(
+                            server.name
+                        );
+
+                    }
+
+                }
+            );
+
+        }
+    );
+
+
+    /*
+    Count how often every OCR spelling appears.
+
+    Example:
+
+    Kishan   = 5 times
+    L Kishan = 2 times
+
+    The more common spelling will usually be the
+    correct canonical version.
+    */
+
+    const frequency =
+        new Map();
+
+
+    rawNames.forEach(
+        name => {
+
+            frequency.set(
+
+                name,
+
+                (
+                    frequency.get(
+                        name
+                    ) ||
+                    0
+                ) +
+                1
+
+            );
+
+        }
+    );
+
+
+    /*
+    First perform obvious cleanup.
+
+    Removes stray single-character OCR words:
+
+    L Kishan -> Kishan
+    Kishan L -> Kishan
+    L Brian  -> Brian
+    Chris L  -> Chris
+
+    But does NOT remove actual names consisting
+    of more than one character.
+    */
+
+    const simplified =
+        new Map();
+
+
+    for (
+        const name of
+        frequency.keys()
+    ) {
+
+        simplified.set(
+            name,
+            simplifyOCRName(
+                name
+            )
+        );
+
+    }
+
+
+    /*
+    Group names by their simplified spelling.
+    */
+
+    const groups =
+        new Map();
+
+
+    for (
+        const [
+            raw,
+            simple
+        ] of simplified
+    ) {
+
+        const key =
+            normalizeNameKey(
+                simple
+            );
+
+
+        if (!key) {
+            continue;
+        }
+
+
+        if (
+            !groups.has(
+                key
+            )
+        ) {
+
+            groups.set(
+                key,
+                []
+            );
+
+        }
+
+
+        groups
+            .get(
+                key
+            )
+            .push(
+                raw
+            );
+
+    }
+
+
+    /*
+    Choose canonical name for each group.
+    */
+
+    const replacement =
+        new Map();
+
+
+    for (
+        const [
+            key,
+            variants
+        ] of groups
+    ) {
+
+        let bestName =
+            null;
+
+
+        let bestScore =
+            -Infinity;
+
+
+        variants.forEach(
+            variant => {
+
+                const simple =
+                    simplifyOCRName(
+                        variant
+                    );
+
+
+                const count =
+                    frequency.get(
+                        variant
+                    ) ||
+                    0;
+
+
+                /*
+                Prefer:
+                - names occurring more often
+                - names without junk tokens
+                - shorter clean spelling
+                */
+
+                let score =
+                    count *
+                    100;
+
+
+                if (
+                    variant ===
+                    simple
+                ) {
+
+                    score +=
+                        30;
+
+                }
+
+
+                score -=
+                    simple.length *
+                    0.01;
+
+
+                if (
+                    score >
+                    bestScore
+                ) {
+
+                    bestScore =
+                        score;
+
+
+                    bestName =
+                        simple;
+
+                }
+
+            }
+        );
+
+
+        variants.forEach(
+            variant => {
+
+                replacement.set(
+                    variant,
+                    bestName
+                );
+
+            }
+        );
+
+    }
+
+
+    /*
+    SECOND PASS:
+    Merge near-duplicate spelling mistakes.
+
+    Example:
+    Kishan
+    Kisham
+
+    Only merges names that are extremely similar.
+    */
+
+    const canonicalNames =
+        [
+            ...new Set(
+                [
+                    ...replacement.values()
+                ]
+            )
+        ];
+
+
+    const nearDuplicateMap =
+        new Map();
+
+
+    canonicalNames.forEach(
+        name => {
+
+            let best =
+                name;
+
+
+            let bestDistance =
+                Infinity;
+
+
+            canonicalNames.forEach(
+                other => {
+
+                    if (
+                        name ===
+                        other
+                    ) {
+
+                        return;
+
+                    }
+
+
+                    const a =
+                        normalizeNameKey(
+                            name
+                        );
+
+
+                    const b =
+                        normalizeNameKey(
+                            other
+                        );
+
+
+                    if (
+                        Math.abs(
+                            a.length -
+                            b.length
+                        ) >
+                        1
+                    ) {
+
+                        return;
+
+                    }
+
+
+                    const distance =
+                        levenshteinDistance(
+                            a,
+                            b
+                        );
+
+
+                    /*
+                    Only merge very close spellings.
+
+                    Longer names tolerate one typo.
+                    */
+
+                    const threshold =
+                        Math.min(
+                            a.length,
+                            b.length
+                        ) >= 5
+                            ? 1
+                            : 0;
+
+
+                    if (
+                        distance <=
+                        threshold
+                    ) {
+
+                        if (
+                            distance <
+                            bestDistance
+                        ) {
+
+                            /*
+                            Prefer spelling that appears
+                            more frequently in raw OCR.
+                            */
+
+                            const nameFrequency =
+                                totalFrequencyForCanonical(
+                                    name,
+                                    replacement,
+                                    frequency
+                                );
+
+
+                            const otherFrequency =
+                                totalFrequencyForCanonical(
+                                    other,
+                                    replacement,
+                                    frequency
+                                );
+
+
+                            if (
+                                otherFrequency >
+                                nameFrequency
+                            ) {
+
+                                best =
+                                    other;
+
+
+                                bestDistance =
+                                    distance;
+
+                            }
+
+                        }
+
+                    }
+
+                }
+            );
+
+
+            nearDuplicateMap.set(
+                name,
+                best
+            );
+
+        }
+    );
+
+
+    /*
+    Update every server assignment.
+    */
+
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
+                server => {
+
+                    const first =
+                        replacement.get(
+                            server.name
+                        ) ||
+                        simplifyOCRName(
+                            server.name
+                        );
+
+
+                    server.name =
+                        nearDuplicateMap.get(
+                            first
+                        ) ||
+                        first;
+
+                }
+            );
+
+        }
+    );
+
+
+    /*
+    Remove duplicate server records if OCR somehow
+    put the exact same person twice in one showing.
+    */
+
+    lineupData.forEach(
+        showing => {
+
+            const seen =
+                new Set();
+
+
+            showing.servers =
+                showing.servers.filter(
+                    server => {
+
+                        const key =
+                            normalizeNameKey(
+                                server.name
+                            );
+
+
+                        if (
+                            seen.has(
+                                key
+                            )
+                        ) {
+
+                            return false;
+
+                        }
+
+
+                        seen.add(
+                            key
+                        );
+
+
+                        return true;
+
+                    }
+                );
+
+        }
+    );
+
+}
+
+
+// =========================================================
+// SIMPLIFY OCR NAME
+// =========================================================
+
+function simplifyOCRName(
+    name
+) {
+
+    if (!name) {
+        return "";
+    }
+
+
+    let tokens =
+        name
+            .replace(
+                /[^A-Za-zÀ-ÿ' -]/g,
+                " "
+            )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim()
+            .split(" ")
+            .filter(Boolean);
+
+
+    /*
+    Remove stray 1-character OCR fragments.
+
+    Examples:
+
+    L Kishan
+    Kishan L
+    L Brian
+    Chris L
+    */
+
+    if (
+        tokens.length >
+        1
+    ) {
+
+        tokens =
+            tokens.filter(
+                token =>
+                    token.length >
+                    1
+            );
+
+    }
+
+
+    if (
+        !tokens.length
+    ) {
+
+        return "";
+
+    }
+
+
+    return tokens
         .map(
             word =>
 
@@ -1949,6 +2855,193 @@ function cleanServerName(value) {
                     .toLowerCase()
         )
         .join(" ");
+
+}
+
+
+// =========================================================
+// NORMALIZED COMPARISON KEY
+// =========================================================
+
+function normalizeNameKey(
+    name
+) {
+
+    return String(
+        name ||
+        ""
+    )
+        .toLowerCase()
+        .replace(
+            /[^a-z]/g,
+            ""
+        );
+
+}
+
+
+// =========================================================
+// LEVENSHTEIN DISTANCE
+// =========================================================
+
+function levenshteinDistance(
+    a,
+    b
+) {
+
+    if (
+        a === b
+    ) {
+
+        return 0;
+
+    }
+
+
+    if (
+        !a.length
+    ) {
+
+        return b.length;
+
+    }
+
+
+    if (
+        !b.length
+    ) {
+
+        return a.length;
+
+    }
+
+
+    const matrix =
+        Array.from(
+            {
+                length:
+                    b.length +
+                    1
+            },
+
+            () =>
+                new Array(
+                    a.length +
+                    1
+                )
+        );
+
+
+    for (
+        let i = 0;
+        i <= b.length;
+        i++
+    ) {
+
+        matrix[i][0] =
+            i;
+
+    }
+
+
+    for (
+        let j = 0;
+        j <= a.length;
+        j++
+    ) {
+
+        matrix[0][j] =
+            j;
+
+    }
+
+
+    for (
+        let i = 1;
+        i <= b.length;
+        i++
+    ) {
+
+        for (
+            let j = 1;
+            j <= a.length;
+            j++
+        ) {
+
+            const cost =
+                b[i - 1] ===
+                a[j - 1]
+                    ? 0
+                    : 1;
+
+
+            matrix[i][j] =
+                Math.min(
+
+                    matrix[i - 1][j] +
+                    1,
+
+                    matrix[i][j - 1] +
+                    1,
+
+                    matrix[i - 1][j - 1] +
+                    cost
+
+                );
+
+        }
+
+    }
+
+
+    return matrix[
+        b.length
+    ][
+        a.length
+    ];
+
+}
+
+
+// =========================================================
+// TOTAL FREQUENCY OF CANONICAL NAME
+// =========================================================
+
+function totalFrequencyForCanonical(
+    canonical,
+    replacement,
+    frequency
+) {
+
+    let total =
+        0;
+
+
+    for (
+        const [
+            raw,
+            converted
+        ] of replacement
+    ) {
+
+        if (
+            converted ===
+            canonical
+        ) {
+
+            total +=
+                frequency.get(
+                    raw
+                ) ||
+                0;
+
+        }
+
+    }
+
+
+    return total;
+
 }
 
 
@@ -1956,7 +3049,9 @@ function cleanServerName(value) {
 // ASSIGNMENT RULES
 // =========================================================
 
-function applyAssignmentRules(showing) {
+function applyAssignmentRules(
+    showing
+) {
 
     const normalServers =
         showing.servers.filter(
@@ -1972,10 +3067,9 @@ function applyAssignmentRules(showing) {
         );
 
 
-    /*
-    ONE NORMAL SERVER
-    = entire theater.
-    */
+    // -----------------------------------------------------
+    // ONE NORMAL SERVER
+    // -----------------------------------------------------
 
     if (
         normalServers.length === 1
@@ -2008,14 +3102,17 @@ function applyAssignmentRules(showing) {
 
                     showing.rules[1]
                         .over50
+
                 );
+
         }
+
     }
 
 
-    /*
-    TWO NORMAL SERVERS
-    */
+    // -----------------------------------------------------
+    // TWO NORMAL SERVERS
+    // -----------------------------------------------------
 
     else if (
         normalServers.length >= 2
@@ -2026,13 +3123,16 @@ function applyAssignmentRules(showing) {
 
                 const index =
                     Math.min(
-                        server.position - 1,
+                        server.position -
+                        1,
                         1
                     );
 
 
                 const rule =
-                    showing.rules[index];
+                    showing.rules[
+                        index
+                    ];
 
 
                 server.rows =
@@ -2041,14 +3141,16 @@ function applyAssignmentRules(showing) {
 
                 server.over50 =
                     rule.over50;
+
             }
         );
+
     }
 
 
-    /*
-    THIRD / PARENTHETICAL SERVER
-    */
+    // -----------------------------------------------------
+    // CONDITIONAL THIRD SERVER
+    // -----------------------------------------------------
 
     conditionalServers.forEach(
         server => {
@@ -2064,10 +3166,16 @@ function applyAssignmentRules(showing) {
 
             server.over50 =
                 server.rows;
+
         }
     );
+
 }
 
+
+// =========================================================
+// COMBINE ROW LETTERS
+// =========================================================
 
 function combineRows(
     first,
@@ -2075,7 +3183,9 @@ function combineRows(
 ) {
 
     return [
+
         ...new Set(
+
             (
                 first +
                 second
@@ -2087,10 +3197,13 @@ function combineRows(
                             letter
                         )
                 )
+
         )
+
     ]
         .sort()
         .join("");
+
 }
 
 
@@ -2098,7 +3211,9 @@ function combineRows(
 // TIME HELPERS
 // =========================================================
 
-function periodFromMarker(marker) {
+function periodFromMarker(
+    marker
+) {
 
     if (!marker) {
         return "";
@@ -2110,22 +3225,29 @@ function periodFromMarker(marker) {
 
 
     if (
-        marker.startsWith("a")
+        marker.startsWith(
+            "a"
+        )
     ) {
 
         return "AM";
+
     }
 
 
     if (
-        marker.startsWith("p")
+        marker.startsWith(
+            "p"
+        )
     ) {
 
         return "PM";
+
     }
 
 
     return "";
+
 }
 
 
@@ -2144,7 +3266,9 @@ function clockMinutes(
         h !== 12
     ) {
 
-        h += 12;
+        h +=
+            12;
+
     }
 
 
@@ -2153,14 +3277,18 @@ function clockMinutes(
         h === 12
     ) {
 
-        h = 0;
+        h =
+            0;
+
     }
 
 
     return (
-        h * 60 +
+        h *
+        60 +
         minute
     );
+
 }
 
 
@@ -2171,16 +3299,22 @@ function formatTime(
 ) {
 
     return (
+
         hour +
         ":" +
-        String(minute)
-            .padStart(
-                2,
-                "0"
-            ) +
+
+        String(
+            minute
+        ).padStart(
+            2,
+            "0"
+        ) +
+
         " " +
         period
+
     );
+
 }
 
 
@@ -2200,14 +3334,19 @@ function populateServers() {
             showing.servers.forEach(
                 server => {
 
-                    if (server.name) {
+                    if (
+                        server.name
+                    ) {
 
                         names.add(
                             server.name
                         );
+
                     }
+
                 }
             );
+
         }
     );
 
@@ -2216,10 +3355,18 @@ function populateServers() {
         '<option value="">Select your name</option>';
 
 
-    [...names]
+    [
+        ...names
+    ]
         .sort(
-            (a, b) =>
-                a.localeCompare(b)
+            (
+                a,
+                b
+            ) =>
+
+                a.localeCompare(
+                    b
+                )
         )
         .forEach(
             name => {
@@ -2233,6 +3380,7 @@ function populateServers() {
                 option.value =
                     name;
 
+
                 option.textContent =
                     name;
 
@@ -2240,13 +3388,15 @@ function populateServers() {
                 serverSelect.appendChild(
                     option
                 );
+
             }
         );
+
 }
 
 
 // =========================================================
-// SHOW SCHEDULE
+// SHOW PERSONAL SCHEDULE
 // =========================================================
 
 document
@@ -2267,18 +3417,30 @@ document
                     "Select your name first."
                 );
 
+
                 return;
+
             }
 
 
-            buildSchedule(name);
+            buildSchedule(
+                name
+            );
+
         }
     );
 
 
-function buildSchedule(name) {
+// =========================================================
+// BUILD PERSONAL SCHEDULE
+// =========================================================
 
-    const assignments = [];
+function buildSchedule(
+    name
+) {
+
+    const assignments =
+        [];
 
 
     lineupData.forEach(
@@ -2297,16 +3459,24 @@ function buildSchedule(name) {
                             ...showing,
 
                             server
+
                         });
+
                     }
+
                 }
             );
+
         }
     );
 
 
     assignments.sort(
-        (a, b) =>
+        (
+            a,
+            b
+        ) =>
+
             a.startMinutes -
             b.startMinutes
     );
@@ -2325,7 +3495,9 @@ function buildSchedule(name) {
         "Today's schedule";
 
 
-    if (!assignments.length) {
+    if (
+        !assignments.length
+    ) {
 
         scheduleList.innerHTML =
             "<p>No assignments found.</p>";
@@ -2337,6 +3509,7 @@ function buildSchedule(name) {
 
 
         return;
+
     }
 
 
@@ -2352,17 +3525,20 @@ function buildSchedule(name) {
             card.className =
                 "assignment" +
                 (
-                    item.server.conditional
+                    item.server
+                        .conditional
                         ? " conditional"
                         : ""
                 );
 
 
-            let rowsHTML = "";
+            let rowsHTML =
+                "";
 
 
             if (
-                item.server.conditional
+                item.server
+                    .conditional
             ) {
 
                 rowsHTML = `
@@ -2415,7 +3591,9 @@ function buildSchedule(name) {
                         </div>
 
                     `;
+
                 }
+
             }
 
 
@@ -2451,6 +3629,7 @@ function buildSchedule(name) {
             scheduleList.appendChild(
                 card
             );
+
         }
     );
 
@@ -2462,19 +3641,22 @@ function buildSchedule(name) {
 
     scheduleSection
         .scrollIntoView({
-            behavior: "smooth"
+            behavior:
+                "smooth"
         });
+
 }
 
 
 // =========================================================
-// FINAL DEBUG SUMMARY
+// DEBUG SUMMARY
 // =========================================================
 
 function appendDetectedLineup() {
 
     detectedText.textContent +=
         "\n\nFINAL INTERPRETATION\n";
+
 
     detectedText.textContent +=
         "====================================\n";
@@ -2502,10 +3684,13 @@ function appendDetectedLineup() {
             );
 
 
-        if (!shows.length) {
+        if (
+            !shows.length
+        ) {
 
             detectedText.textContent +=
                 "  None\n";
+
         }
 
 
@@ -2513,13 +3698,17 @@ function appendDetectedLineup() {
             showing => {
 
                 detectedText.textContent +=
+
                     `\n  ${showing.start} - ${showing.end}\n`;
 
 
-                if (!showing.servers.length) {
+                if (
+                    !showing.servers.length
+                ) {
 
                     detectedText.textContent +=
                         "  ! No server detected\n";
+
                 }
 
 
@@ -2554,21 +3743,27 @@ function appendDetectedLineup() {
                                 detectedText.textContent +=
 
                                     ` -> ${server.over50} over 50`;
+
                             }
 
 
                             detectedText.textContent +=
                                 "\n";
+
                         }
+
                     }
                 );
+
             }
         );
 
 
         detectedText.textContent +=
             "\n------------------------------------\n";
+
     }
+
 }
 
 
@@ -2576,9 +3771,13 @@ function appendDetectedLineup() {
 // ESCAPE HTML
 // =========================================================
 
-function escapeHTML(value) {
+function escapeHTML(
+    value
+) {
 
-    return String(value)
+    return String(
+        value
+    )
 
         .replace(
             /&/g,
@@ -2604,4 +3803,5 @@ function escapeHTML(value) {
             /'/g,
             "&#039;"
         );
+
 }
