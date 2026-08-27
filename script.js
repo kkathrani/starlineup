@@ -1,21 +1,24 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 10
+VERSION 11
 ============================================================
 
-Changes from Version 9:
-✓ Keeps working grid detection
-✓ Keeps per-cell OCR
-✓ Keeps tolerant time recognition
-✓ Merges duplicate OCR names
-✓ Removes stray one-letter OCR fragments
-✓ Normalizes capitalization
-✓ Groups server assignments under one real name
+Keeps:
+✓ Working grid detection
+✓ Per-cell OCR
+✓ Tolerant time parsing
+✓ Chronological schedule
 ✓ 1 server = ALL ROWS
 ✓ 2 servers = split rows
-✓ 3rd server = conditional over 50
-✓ Chronological personal schedule
+✓ 3rd row = conditional over 50
+
+Improves:
+✓ Removes stray OCR tokens like "L Kishan"
+✓ Removes suffixes like "Kishan L"
+✓ Removes junk entries like "L L"
+✓ Rejects obvious garbage names
+✓ Deduplicates names inside showings
 ============================================================
 */
 
@@ -72,7 +75,7 @@ let lineupData = [];
 
 
 // =========================================================
-// STAR CINEMA ROW CONFIGURATIONS
+// THEATER ROW RULES
 // =========================================================
 
 const theaterRows = {
@@ -132,65 +135,68 @@ const theaterRows = {
 // IMAGE UPLOAD
 // =========================================================
 
-imageInput.addEventListener("change", () => {
+imageInput.addEventListener(
+    "change",
+    () => {
 
-    uploadedFile =
-        imageInput.files[0];
-
-
-    if (!uploadedFile) {
-        return;
-    }
+        uploadedFile =
+            imageInput.files[0];
 
 
-    const url =
-        URL.createObjectURL(
-            uploadedFile
-        );
+        if (!uploadedFile) {
+            return;
+        }
 
 
-    imagePreview.src =
-        url;
-
-
-    imagePreview.onload =
-        () => {
-
-            URL.revokeObjectURL(
-                url
+        const url =
+            URL.createObjectURL(
+                uploadedFile
             );
 
-        };
+
+        imagePreview.src =
+            url;
 
 
-    previewContainer
-        .classList
-        .remove("hidden");
+        imagePreview.onload =
+            () => {
+
+                URL.revokeObjectURL(
+                    url
+                );
+
+            };
 
 
-    readButton
-        .classList
-        .remove("hidden");
+        previewContainer
+            .classList
+            .remove("hidden");
 
 
-    serverSection
-        .classList
-        .add("hidden");
+        readButton
+            .classList
+            .remove("hidden");
 
 
-    scheduleSection
-        .classList
-        .add("hidden");
+        serverSection
+            .classList
+            .add("hidden");
 
 
-    debugSection
-        .classList
-        .add("hidden");
+        scheduleSection
+            .classList
+            .add("hidden");
 
 
-    lineupData = [];
+        debugSection
+            .classList
+            .add("hidden");
 
-});
+
+        lineupData = [];
+
+    }
+);
 
 
 // =========================================================
@@ -267,7 +273,7 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // DETECT SHOWING COLUMNS
+            // DETECT COLUMNS
             // ---------------------------------------------
 
             const columns =
@@ -292,7 +298,7 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // DETECT HORIZONTAL GRID
+            // DETECT ROW GRID
             // ---------------------------------------------
 
             const rows =
@@ -323,7 +329,7 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // CREATE OCR WORKER
+            // OCR WORKER
             // ---------------------------------------------
 
             readButton.textContent =
@@ -354,6 +360,7 @@ readButton.addEventListener(
 
             detectedText.textContent +=
                 "\nTIME CELL OCR\n";
+
 
             detectedText.textContent +=
                 "====================================\n";
@@ -522,6 +529,7 @@ readButton.addEventListener(
             detectedText.textContent +=
                 "\nSERVER OCR\n";
 
+
             detectedText.textContent +=
                 "====================================\n";
 
@@ -677,15 +685,14 @@ readButton.addEventListener(
 
 
             // ---------------------------------------------
-            // IMPORTANT VERSION 10 STEP:
-            // MERGE DUPLICATE NAMES
+            // CLEAN / MERGE SERVER NAMES
             // ---------------------------------------------
 
             canonicalizeServerNames();
 
 
             // ---------------------------------------------
-            // APPLY ROW RULES
+            // APPLY ASSIGNMENTS
             // ---------------------------------------------
 
             lineupData.forEach(
@@ -733,6 +740,7 @@ readButton.addEventListener(
             detectedText.textContent +=
                 "\n\nERROR\n";
 
+
             detectedText.textContent +=
                 "====================================\n";
 
@@ -767,10 +775,12 @@ readButton.addEventListener(
 
 
 // =========================================================
-// IMAGE LOADING
+// LOAD IMAGE
 // =========================================================
 
-function loadImage(file) {
+function loadImage(
+    file
+) {
 
     return new Promise(
         (
@@ -1193,7 +1203,7 @@ function findBestColumnSet(
 
 
 // =========================================================
-// HORIZONTAL GRID DETECTION
+// HORIZONTAL GRID
 // =========================================================
 
 function detectTheaterGrid(
@@ -1502,7 +1512,7 @@ function findBestTheaterGrid(
 
 
 // =========================================================
-// CLUSTER GRID LINES
+// CLUSTER LINES
 // =========================================================
 
 function clusterPositions(
@@ -1656,7 +1666,7 @@ function median(
 
 
 // =========================================================
-// OCR ONE CELL
+// OCR CELL
 // =========================================================
 
 async function ocrCell(
@@ -1905,7 +1915,7 @@ async function ocrCell(
 
 
 // =========================================================
-// TIME OCR NORMALIZATION
+// TIME NORMALIZATION
 // =========================================================
 
 function normalizeTimeOCR(
@@ -2195,7 +2205,7 @@ function parseShowtime(
 
 
 // =========================================================
-// RAW SERVER NAME CLEANUP
+// STRONGER NAME CLEANUP
 // =========================================================
 
 function cleanServerName(
@@ -2224,16 +2234,56 @@ function cleanServerName(
             .trim();
 
 
+    if (!cleaned) {
+        return "";
+    }
+
+
+    /*
+    Remove stray single-letter OCR tokens.
+
+    Examples:
+
+    L Kishan -> Kishan
+    Kishan L -> Kishan
+    L Brian -> Brian
+    L L -> blank
+    */
+
+    let tokens =
+        cleaned
+            .split(" ")
+            .filter(Boolean);
+
+
     if (
-        cleaned.length <
-        2 ||
-        cleaned.length >
-        30
+        tokens.length >
+        1
+    ) {
+
+        tokens =
+            tokens.filter(
+                token =>
+                    token.length >
+                    1
+            );
+
+    }
+
+
+    if (
+        !tokens.length
     ) {
 
         return "";
 
     }
+
+
+    cleaned =
+        tokens.join(
+            " "
+        );
 
 
     /*
@@ -2244,31 +2294,51 @@ function cleanServerName(
         cleaned
             .split(" ")
             .map(
-                word => {
+                word =>
 
-                    if (!word) {
-                        return "";
-                    }
+                    word
+                        .charAt(0)
+                        .toUpperCase() +
 
-
-                    return (
-                        word
-                            .charAt(0)
-                            .toUpperCase() +
-
-                        word
-                            .slice(1)
-                            .toLowerCase()
-                    );
-
-                }
+                    word
+                        .slice(1)
+                        .toLowerCase()
             )
-            .filter(Boolean)
             .join(" ");
 
 
     /*
-    Don't treat row codes as names.
+    Reject obvious junk.
+    */
+
+    const garbage =
+        new Set(
+            [
+                "Rr",
+                "Ll",
+                "Ii",
+                "Tt",
+                "Seating",
+                "Capacity",
+                "Theater",
+                "Movie"
+            ]
+        );
+
+
+    if (
+        garbage.has(
+            cleaned
+        )
+    ) {
+
+        return "";
+
+    }
+
+
+    /*
+    Don't let row codes become names.
     */
 
     if (
@@ -2282,461 +2352,77 @@ function cleanServerName(
     }
 
 
+    if (
+        cleaned.length <
+        2 ||
+        cleaned.length >
+        24
+    ) {
+
+        return "";
+
+    }
+
+
+    if (
+        cleaned
+            .split(" ")
+            .length >
+        2
+    ) {
+
+        return "";
+
+    }
+
+
     return cleaned;
 
 }
 
 
 // =========================================================
-// VERSION 10 NAME NORMALIZATION
+// CANONICALIZE SERVER NAMES
 // =========================================================
 
 function canonicalizeServerNames() {
 
-    const rawNames =
-        [];
-
-
     lineupData.forEach(
         showing => {
 
-            showing.servers.forEach(
-                server => {
-
-                    if (
-                        server.name
-                    ) {
-
-                        rawNames.push(
-                            server.name
-                        );
-
-                    }
-
-                }
-            );
-
-        }
-    );
-
-
-    /*
-    Count how often every OCR spelling appears.
-
-    Example:
-
-    Kishan   = 5 times
-    L Kishan = 2 times
-
-    The more common spelling will usually be the
-    correct canonical version.
-    */
-
-    const frequency =
-        new Map();
-
-
-    rawNames.forEach(
-        name => {
-
-            frequency.set(
-
-                name,
-
-                (
-                    frequency.get(
-                        name
-                    ) ||
-                    0
-                ) +
-                1
-
-            );
-
-        }
-    );
-
-
-    /*
-    First perform obvious cleanup.
-
-    Removes stray single-character OCR words:
-
-    L Kishan -> Kishan
-    Kishan L -> Kishan
-    L Brian  -> Brian
-    Chris L  -> Chris
-
-    But does NOT remove actual names consisting
-    of more than one character.
-    */
-
-    const simplified =
-        new Map();
-
-
-    for (
-        const name of
-        frequency.keys()
-    ) {
-
-        simplified.set(
-            name,
-            simplifyOCRName(
-                name
-            )
-        );
-
-    }
-
-
-    /*
-    Group names by their simplified spelling.
-    */
-
-    const groups =
-        new Map();
-
-
-    for (
-        const [
-            raw,
-            simple
-        ] of simplified
-    ) {
-
-        const key =
-            normalizeNameKey(
-                simple
-            );
-
-
-        if (!key) {
-            continue;
-        }
-
-
-        if (
-            !groups.has(
-                key
-            )
-        ) {
-
-            groups.set(
-                key,
-                []
-            );
-
-        }
-
-
-        groups
-            .get(
-                key
-            )
-            .push(
-                raw
-            );
-
-    }
-
-
-    /*
-    Choose canonical name for each group.
-    */
-
-    const replacement =
-        new Map();
-
-
-    for (
-        const [
-            key,
-            variants
-        ] of groups
-    ) {
-
-        let bestName =
-            null;
-
-
-        let bestScore =
-            -Infinity;
-
-
-        variants.forEach(
-            variant => {
-
-                const simple =
-                    simplifyOCRName(
-                        variant
-                    );
-
-
-                const count =
-                    frequency.get(
-                        variant
-                    ) ||
-                    0;
-
-
-                /*
-                Prefer:
-                - names occurring more often
-                - names without junk tokens
-                - shorter clean spelling
-                */
-
-                let score =
-                    count *
-                    100;
-
-
-                if (
-                    variant ===
-                    simple
-                ) {
-
-                    score +=
-                        30;
-
-                }
-
-
-                score -=
-                    simple.length *
-                    0.01;
-
-
-                if (
-                    score >
-                    bestScore
-                ) {
-
-                    bestScore =
-                        score;
-
-
-                    bestName =
-                        simple;
-
-                }
-
-            }
-        );
-
-
-        variants.forEach(
-            variant => {
-
-                replacement.set(
-                    variant,
-                    bestName
-                );
-
-            }
-        );
-
-    }
-
-
-    /*
-    SECOND PASS:
-    Merge near-duplicate spelling mistakes.
-
-    Example:
-    Kishan
-    Kisham
-
-    Only merges names that are extremely similar.
-    */
-
-    const canonicalNames =
-        [
-            ...new Set(
-                [
-                    ...replacement.values()
-                ]
-            )
-        ];
-
-
-    const nearDuplicateMap =
-        new Map();
-
-
-    canonicalNames.forEach(
-        name => {
-
-            let best =
-                name;
-
-
-            let bestDistance =
-                Infinity;
-
-
-            canonicalNames.forEach(
-                other => {
-
-                    if (
-                        name ===
-                        other
-                    ) {
-
-                        return;
-
-                    }
-
-
-                    const a =
-                        normalizeNameKey(
-                            name
-                        );
-
-
-                    const b =
-                        normalizeNameKey(
-                            other
-                        );
-
-
-                    if (
-                        Math.abs(
-                            a.length -
-                            b.length
-                        ) >
-                        1
-                    ) {
-
-                        return;
-
-                    }
-
-
-                    const distance =
-                        levenshteinDistance(
-                            a,
-                            b
-                        );
-
-
-                    /*
-                    Only merge very close spellings.
-
-                    Longer names tolerate one typo.
-                    */
-
-                    const threshold =
-                        Math.min(
-                            a.length,
-                            b.length
-                        ) >= 5
-                            ? 1
-                            : 0;
-
-
-                    if (
-                        distance <=
-                        threshold
-                    ) {
-
-                        if (
-                            distance <
-                            bestDistance
-                        ) {
-
-                            /*
-                            Prefer spelling that appears
-                            more frequently in raw OCR.
-                            */
-
-                            const nameFrequency =
-                                totalFrequencyForCanonical(
-                                    name,
-                                    replacement,
-                                    frequency
-                                );
-
-
-                            const otherFrequency =
-                                totalFrequencyForCanonical(
-                                    other,
-                                    replacement,
-                                    frequency
-                                );
-
-
-                            if (
-                                otherFrequency >
-                                nameFrequency
-                            ) {
-
-                                best =
-                                    other;
-
-
-                                bestDistance =
-                                    distance;
-
-                            }
-
-                        }
-
-                    }
-
-                }
-            );
-
-
-            nearDuplicateMap.set(
-                name,
-                best
-            );
-
-        }
-    );
-
-
-    /*
-    Update every server assignment.
-    */
-
-    lineupData.forEach(
-        showing => {
+            /*
+            Run every already-read name through our
+            strongest cleanup again.
+            */
 
             showing.servers.forEach(
                 server => {
-
-                    const first =
-                        replacement.get(
-                            server.name
-                        ) ||
-                        simplifyOCRName(
-                            server.name
-                        );
-
 
                     server.name =
-                        nearDuplicateMap.get(
-                            first
-                        ) ||
-                        first;
+                        cleanServerName(
+                            server.name
+                        );
 
                 }
             );
 
-        }
-    );
+
+            /*
+            Remove blank entries.
+            */
+
+            showing.servers =
+                showing.servers.filter(
+                    server =>
+                        Boolean(
+                            server.name
+                        )
+                );
 
 
-    /*
-    Remove duplicate server records if OCR somehow
-    put the exact same person twice in one showing.
-    */
-
-    lineupData.forEach(
-        showing => {
+            /*
+            Remove duplicates inside a showing.
+            */
 
             const seen =
                 new Set();
@@ -2747,9 +2433,8 @@ function canonicalizeServerNames() {
                     server => {
 
                         const key =
-                            normalizeNameKey(
-                                server.name
-                            );
+                            server.name
+                                .toLowerCase();
 
 
                         if (
@@ -2776,91 +2461,95 @@ function canonicalizeServerNames() {
         }
     );
 
-}
-
-
-// =========================================================
-// SIMPLIFY OCR NAME
-// =========================================================
-
-function simplifyOCRName(
-    name
-) {
-
-    if (!name) {
-        return "";
-    }
-
-
-    let tokens =
-        name
-            .replace(
-                /[^A-Za-zÀ-ÿ' -]/g,
-                " "
-            )
-            .replace(
-                /\s+/g,
-                " "
-            )
-            .trim()
-            .split(" ")
-            .filter(Boolean);
-
 
     /*
-    Remove stray 1-character OCR fragments.
+    Second pass across the ENTIRE schedule.
 
-    Examples:
-
-    L Kishan
+    This handles:
+    Kishan
     Kishan L
-    L Brian
-    Chris L
+    L Kishan
+
+    after cleanup they all become Kishan.
     */
 
-    if (
-        tokens.length >
-        1
-    ) {
+    const canonicalMap =
+        new Map();
 
-        tokens =
-            tokens.filter(
-                token =>
-                    token.length >
-                    1
+
+    lineupData.forEach(
+        showing => {
+
+            showing.servers.forEach(
+                server => {
+
+                    const key =
+                        normalizeNameKey(
+                            server.name
+                        );
+
+
+                    if (!key) {
+                        return;
+                    }
+
+
+                    if (
+                        !canonicalMap.has(
+                            key
+                        )
+                    ) {
+
+                        canonicalMap.set(
+                            key,
+                            server.name
+                        );
+
+                    }
+
+                }
             );
 
-    }
+        }
+    );
 
 
-    if (
-        !tokens.length
-    ) {
+    lineupData.forEach(
+        showing => {
 
-        return "";
+            showing.servers.forEach(
+                server => {
 
-    }
+                    const key =
+                        normalizeNameKey(
+                            server.name
+                        );
 
 
-    return tokens
-        .map(
-            word =>
+                    if (
+                        canonicalMap.has(
+                            key
+                        )
+                    ) {
 
-                word
-                    .charAt(0)
-                    .toUpperCase() +
+                        server.name =
+                            canonicalMap.get(
+                                key
+                            );
 
-                word
-                    .slice(1)
-                    .toLowerCase()
-        )
-        .join(" ");
+                    }
+
+                }
+            );
+
+        }
+    );
 
 }
 
 
 // =========================================================
-// NORMALIZED COMPARISON KEY
+// NAME COMPARISON KEY
 // =========================================================
 
 function normalizeNameKey(
@@ -2876,171 +2565,6 @@ function normalizeNameKey(
             /[^a-z]/g,
             ""
         );
-
-}
-
-
-// =========================================================
-// LEVENSHTEIN DISTANCE
-// =========================================================
-
-function levenshteinDistance(
-    a,
-    b
-) {
-
-    if (
-        a === b
-    ) {
-
-        return 0;
-
-    }
-
-
-    if (
-        !a.length
-    ) {
-
-        return b.length;
-
-    }
-
-
-    if (
-        !b.length
-    ) {
-
-        return a.length;
-
-    }
-
-
-    const matrix =
-        Array.from(
-            {
-                length:
-                    b.length +
-                    1
-            },
-
-            () =>
-                new Array(
-                    a.length +
-                    1
-                )
-        );
-
-
-    for (
-        let i = 0;
-        i <= b.length;
-        i++
-    ) {
-
-        matrix[i][0] =
-            i;
-
-    }
-
-
-    for (
-        let j = 0;
-        j <= a.length;
-        j++
-    ) {
-
-        matrix[0][j] =
-            j;
-
-    }
-
-
-    for (
-        let i = 1;
-        i <= b.length;
-        i++
-    ) {
-
-        for (
-            let j = 1;
-            j <= a.length;
-            j++
-        ) {
-
-            const cost =
-                b[i - 1] ===
-                a[j - 1]
-                    ? 0
-                    : 1;
-
-
-            matrix[i][j] =
-                Math.min(
-
-                    matrix[i - 1][j] +
-                    1,
-
-                    matrix[i][j - 1] +
-                    1,
-
-                    matrix[i - 1][j - 1] +
-                    cost
-
-                );
-
-        }
-
-    }
-
-
-    return matrix[
-        b.length
-    ][
-        a.length
-    ];
-
-}
-
-
-// =========================================================
-// TOTAL FREQUENCY OF CANONICAL NAME
-// =========================================================
-
-function totalFrequencyForCanonical(
-    canonical,
-    replacement,
-    frequency
-) {
-
-    let total =
-        0;
-
-
-    for (
-        const [
-            raw,
-            converted
-        ] of replacement
-    ) {
-
-        if (
-            converted ===
-            canonical
-        ) {
-
-            total +=
-                frequency.get(
-                    raw
-                ) ||
-                0;
-
-        }
-
-    }
-
-
-    return total;
 
 }
 
@@ -3067,12 +2591,13 @@ function applyAssignmentRules(
         );
 
 
-    // -----------------------------------------------------
-    // ONE NORMAL SERVER
-    // -----------------------------------------------------
+    /*
+    ONE NORMAL SERVER
+    */
 
     if (
-        normalServers.length === 1
+        normalServers.length ===
+        1
     ) {
 
         const server =
@@ -3084,7 +2609,8 @@ function applyAssignmentRules(
 
 
         if (
-            conditionalServers.length === 0
+            conditionalServers.length ===
+            0
         ) {
 
             server.over50 =
@@ -3110,12 +2636,13 @@ function applyAssignmentRules(
     }
 
 
-    // -----------------------------------------------------
-    // TWO NORMAL SERVERS
-    // -----------------------------------------------------
+    /*
+    TWO NORMAL SERVERS
+    */
 
     else if (
-        normalServers.length >= 2
+        normalServers.length >=
+        2
     ) {
 
         normalServers.forEach(
@@ -3148,9 +2675,9 @@ function applyAssignmentRules(
     }
 
 
-    // -----------------------------------------------------
-    // CONDITIONAL THIRD SERVER
-    // -----------------------------------------------------
+    /*
+    CONDITIONAL THIRD SERVER
+    */
 
     conditionalServers.forEach(
         server => {
@@ -3174,7 +2701,7 @@ function applyAssignmentRules(
 
 
 // =========================================================
-// COMBINE ROW LETTERS
+// COMBINE ROWS
 // =========================================================
 
 function combineRows(
@@ -3262,8 +2789,10 @@ function clockMinutes(
 
 
     if (
-        period === "PM" &&
-        h !== 12
+        period ===
+        "PM" &&
+        h !==
+        12
     ) {
 
         h +=
@@ -3273,8 +2802,10 @@ function clockMinutes(
 
 
     if (
-        period === "AM" &&
-        h === 12
+        period ===
+        "AM" &&
+        h ===
+        12
     ) {
 
         h =
@@ -3319,7 +2850,7 @@ function formatTime(
 
 
 // =========================================================
-// SERVER DROPDOWN
+// POPULATE SERVER DROPDOWN
 // =========================================================
 
 function populateServers() {
