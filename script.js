@@ -1,7 +1,7 @@
 /*
 ============================================================
 STAR CINEMA PERSONAL LINEUP
-VERSION 13
+VERSION 13.1
 ============================================================
 
 Keeps:
@@ -21,6 +21,7 @@ Improves:
     KishanL -> Kishan
 ✓ Does NOT damage legitimate names like Luca
 ✓ Removes duplicate server entries
+✓ Makes movie timeframe bold in personal schedule
 ============================================================
 */
 
@@ -3327,15 +3328,17 @@ function buildSchedule(
 
                 <div class="assignment-time">
 
-                    ${escapeHTML(
-                        item.start
-                    )}
+                    <strong>
+                        ${escapeHTML(
+                            item.start
+                        )}
 
-                    –
+                        –
 
-                    ${escapeHTML(
-                        item.end
-                    )}
+                        ${escapeHTML(
+                            item.end
+                        )}
+                    </strong>
 
                 </div>
 
